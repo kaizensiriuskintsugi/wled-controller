@@ -1,9 +1,9 @@
 # WLED TOUCHSCREEN CONTROLLER
-## Product Development Plan v1.7
+## Product Development Plan v1.8
 
 **Created:** February 4, 2026
-**Updated:** February 6, 2026
-**Status:** Phase 7B Complete — Mock Mode + 7C/7D/7E in progress
+**Updated:** February 7, 2026
+**Status:** Phase 7 Complete — All UI screens working, hardware validated
 **Platform:** Waveshare ESP32-S3-Touch-LCD-1.28
 
 ---
@@ -34,10 +34,11 @@ This controller shares the same hardware and many of the same patterns as the pl
 | 5 | WLED API | ✅ Complete | All commands working, 228 effects, 75 palettes |
 | 6 | Input Systems | ✅ Complete | Encoder, button, touch, gestures all working |
 | 7A | UI: Device List | ✅ Complete | Scrollable list, encoder nav, tap/press to select |
-| 7B | UI: Device Control | ✅ Complete | Brightness arc, encoder control, two-pass rendering, identify device |
-| 7C | UI: Effect Browser | 🔄 In Progress | Mock mode development — no network needed |
-| 7D | UI: Palette Browser | ⬜ Pending | Same pattern as effect browser |
-| 7E | UI: Navigation | ⬜ Pending | Full gesture wiring between all screens |
+| 7B | UI: Device Control | ✅ Complete | Brightness arc, encoder control, two-pass rendering |
+| 7C | UI: Effect Browser | ✅ Complete | 50 named effects, scrollable, encoder select |
+| 7D | UI: Palette Browser | ✅ Complete | 50 named palettes, shared browser pattern |
+| 7E | UI: Color Picker | ✅ Complete | HSV hue ring, touch select, encoder saturation |
+| 7F | UI: Power & Navigation | ✅ Complete | Swipe up power toggle, all gestures wired |
 | 8 | Polish | ⬜ Pending | Persistence, multi-device, error handling |
 
 ---
@@ -47,22 +48,13 @@ This controller shares the same hardware and many of the same patterns as the pl
 **Purpose:** Enables UI development without WiFi or WLED devices present.
 
 **Activation:** Add `-DMOCK_MODE=1` to platformio.ini build_flags
-**Deactivation:** Remove or comment out the flag — zero code changes needed
+**Deactivation:** Remove or comment out the flag (don't set to 0 — ifdef checks existence, not value)
 
 **What it does:**
 - WiFi: Skips real connection, reports "Mock WiFi" connected
 - Discovery: Populates 5 fake devices (Lighthouse-Main, Beacon-North, etc.)
-- WLED API: Returns fake state (brightness 128, effect 0, palette 0), logs writes to serial
+- WLED API: Returns fake state, logs writes to serial
 - UI: Works identically — doesn't know the difference
-
-**Mock Devices:**
-| Name | Fake IP |
-|------|---------|
-| Lighthouse-Main | 192.168.1.100 |
-| Beacon-North | 192.168.1.101 |
-| Lantern-Garden | 192.168.1.102 |
-| Torch-Entry | 192.168.1.103 |
-| Glow-Studio | 192.168.1.104 |
 
 ---
 
@@ -82,12 +74,9 @@ src/
   input.cpp           — Encoder + touch handling
   ui.cpp              — Screen states, navigation, ties modules together
 include/
-  wifi_manager.h
-  discovery.h
-  wled_api.h
-  display.h
-  input.h
-  ui.h
+  wifi_manager.h / discovery.h / wled_api.h / display.h / input.h / ui.h
+docs/
+  WLED-Controller-PDP-v1.8.md — This file
 ```
 
 ### Module Responsibilities
@@ -104,7 +93,7 @@ include/
 
 ---
 
-## COMPLETED PHASES (1-6, 7A, 7B)
+## COMPLETED PHASES (1-6)
 
 See PDP v1.6 for full details on completed phases.
 
@@ -117,82 +106,97 @@ See PDP v1.6 for full details on completed phases.
 - CST816S gesture lockout until finger lift
 - Consume-on-read input pattern prevents double-processing
 - Two-pass rendering (input then draw) prevents screen transition bugs
-- Arc thickness via multiple radii drawing
 - Encoder accumulator with threshold for list scrolling
 
 ---
 
-## PHASE 7C: EFFECT BROWSER
+## PHASE 7: UI INTEGRATION ✅ COMPLETE
 
-**Goal:** Scroll through effect names, select one, apply to device.
+### Full Navigation Map (All Validated on Hardware)
 
-### Tasks
-- [ ] Mock: hardcode 20 common WLED effect names
-- [ ] Encoder press on control screen → enter effect browser
-- [ ] Effect list screen: scrollable, encoder navigates with accumulator
-- [ ] Current effect highlighted differently (cyan vs white)
-- [ ] Encoder press → select effect, update state, return to control
-- [ ] Show effect ID and name
-- [ ] Swipe down → back to control without changing effect
-
-### Display Layout
-```
-┌─────────────────┐
-│    Effects        │  ← title
-│                   │
-│  ► #42 Rainbow    │  ← highlighted (cyan)
-│    #43 Chase      │  ← normal (white)
-│    #44 Sparkle    │  ← normal (white)
-│    #45 Fire       │  ← normal (white)
-│                   │
-│   42/228          │  ← position indicator
-└─────────────────┘
-```
-
----
-
-## PHASE 7D: PALETTE BROWSER
-
-**Goal:** Same scroll/select pattern as effect browser, for palettes.
-
-### Tasks
-- [ ] Mock: hardcode 15 common WLED palette names
-- [ ] Swipe left on control screen → enter palette browser
-- [ ] Same layout and interaction as effect browser
-- [ ] Encoder press → select palette, update state, return to control
-
----
-
-## PHASE 7E: FULL NAVIGATION
-
-**Goal:** All gesture transitions wired and tested.
-
-### Navigation Map
 | From | Action | To |
 |------|--------|----|
-| Device List | Tap/Press | Device Control |
+| Device List | Tap / Encoder Press | Device Control |
+| Device Control | Encoder Rotate | Adjust Brightness |
 | Device Control | Encoder Press | Effect Browser |
 | Device Control | Swipe Left | Palette Browser |
+| Device Control | Swipe Right | Color Picker |
+| Device Control | Swipe Up | Toggle Power ON/OFF |
 | Device Control | Swipe Down | Device List |
-| Device Control | Long Press (enc/touch) | Identify Device |
-| Effect Browser | Encoder Press | Device Control (effect applied) |
-| Effect Browser | Swipe Down | Device Control (no change) |
-| Palette Browser | Encoder Press | Device Control (palette applied) |
-| Palette Browser | Swipe Down | Device Control (no change) |
+| Device Control | Long Press (enc/touch) | Identify Device (pulse) |
+| Effect Browser | Encoder Rotate | Scroll list |
+| Effect Browser | Encoder Press | Apply effect → Device Control |
+| Effect Browser | Swipe Down | Cancel → Device Control |
+| Palette Browser | Encoder Rotate | Scroll list |
+| Palette Browser | Encoder Press | Apply palette → Device Control |
+| Palette Browser | Swipe Down | Cancel → Device Control |
+| Color Picker | Touch ring | Select hue |
+| Color Picker | Encoder Rotate | Adjust saturation |
+| Color Picker | Encoder Press | Apply color → Device Control |
+| Color Picker | Swipe Down | Cancel → Device Control |
+
+### 7A: Device List
+- Scrollable with encoder accumulator (threshold 4)
+- Tap or encoder press to select device
+- Fetches device state on selection
+
+### 7B: Device Control
+- Large brightness number with arc visualization
+- Effect and palette names displayed (not just IDs)
+- ON/OFF status indicator
+- Partial redraw for brightness changes (no full screen flicker)
+
+### 7C: Effect Browser
+- 50 named effects in shared lookup table
+- Generic `drawBrowserList()` / `handleBrowserInput()` reused by palette browser
+- Current active effect shown in green
+- Position indicator at bottom
+
+### 7D: Palette Browser
+- 50 named palettes in shared lookup table
+- Identical interaction pattern to effect browser (code reuse)
+- Entered via swipe left from control screen
+
+### 7E: Color Picker
+- HSV hue ring rendered pixel-by-pixel around circular display
+- Touch the ring to select hue angle (atan2 calculation)
+- Encoder adjusts saturation (0-255)
+- Center preview circle shows selected color
+- Indicator dot tracks position, erases cleanly on move
+- Encoder press confirms → converts HSV to RGB → sends to device
+
+### 7F: Power & Navigation
+- Swipe up on control screen toggles power
+- All gesture transitions wired and tested
+- Swipe down is universal "back/cancel" gesture
+
+### Phase 7 Key Learnings
+- Generic browser functions eliminate duplicate code — effect and palette browsers share 100% of scroll/select logic
+- HSV color model maps naturally to circular display (angle = hue)
+- Indicator cleanup requires tracking old position and redrawing ring segment
+- Swipe speed sensitivity affects gesture detection — noted for refinement
+- Control responsiveness has room for improvement — noted for refinement
 
 ---
 
 ## PHASE 8: POLISH & EXPANSION
 
 ### Tasks
-- [ ] Settings persistence via NVS
-- [ ] Color picker screen
-- [ ] Group control: select multiple devices
-- [ ] Preset save/recall
-- [ ] Error handling: WiFi lost, device unreachable
-- [ ] AP mode for field use
+- [ ] Settings persistence via NVS (last device, brightness, preferences)
+- [ ] Boot sequence: connect WiFi → scan → restore last device → show control
+- [ ] Cache effect/palette counts per device (avoid HTTP round-trip on each browser entry)
+- [ ] Group control: select multiple devices, control simultaneously
+- [ ] Preset save/recall: store favorite combinations
+- [ ] Error handling: WiFi lost, device unreachable, scan empty
 - [ ] Rescan capability from UI
+- [ ] AP mode for field use
 - [ ] Power: battery monitoring if on LiPo
+
+### Refinement Backlog (UX Issues Noted During Phase 7)
+- [ ] Swipe speed sensitivity — fast swipes sometimes not detected
+- [ ] Control responsiveness — general input feel improvements
+- [ ] Effect/palette browser entry lag — HTTP fetch for count on every entry
+- [ ] Additional UX ideas from hands-on testing (to be captured)
 
 ---
 
@@ -249,9 +253,33 @@ See PDP v1.6 for full details on completed phases.
 | 2026-02-05 | Never end test sequences on full white | Max current risks PSU damage |
 | 2026-02-05 | Gesture lockout until finger lift | CST816S repeats gesture ID while touching |
 | 2026-02-05 | Consume-on-read input pattern | Prevents double-processing of events |
-| 2026-02-05 | Break Phase 7 into sub-phases (7A-7E) | Test each screen before building next |
+| 2026-02-05 | Break Phase 7 into sub-phases | Test each screen before building next |
 | 2026-02-05 | Two-pass rendering in ui_update | Prevents screen transition timing bugs |
 | 2026-02-06 | Mock mode via compile flag | Enables UI dev without WiFi/WLED devices |
+| 2026-02-07 | Generic browser functions | Effect + palette browsers share all logic |
+| 2026-02-07 | HSV hue ring for color picker | Natural fit for round display |
+| 2026-02-07 | Swipe up for power toggle | Intuitive — swipe up = wake/power |
+| 2026-02-07 | Validate on hardware before Git commit | Ensures repo always has working code |
+| 2026-02-07 | PDP lives in repo (docs/) | Documentation stays with the code it describes |
+
+---
+
+## DEVELOPMENT WORKFLOW
+
+### Build → Test → Commit Cycle
+1. Claude provides code changes
+2. Paste into VS Code files
+3. Build (✓ button in PlatformIO toolbar)
+4. Upload to board (→ button)
+5. Test on hardware — verify functionality
+6. Refine if needed (repeat 1-5)
+7. **Only after validation:** Commit and push via GitHub Desktop
+
+### GitHub Integration
+- **Repo:** github.com/kaizensiriuskintsugi/wled-controller
+- **Branch:** main
+- **Tool:** GitHub Desktop for commit/push
+- **Context continuity:** Claude fetches current code from raw GitHub URLs at conversation start
 
 ---
 
@@ -266,4 +294,5 @@ See PDP v1.6 for full details on completed phases.
 | 1.4 | 2026-02-05 | Phase 5 complete. WLED API verified. |
 | 1.5 | 2026-02-05 | Phase 6 complete. All inputs working. |
 | 1.6 | 2026-02-05 | Phase 7 broken into sub-phases 7A-7E. |
-| 1.7 | 2026-02-06 | 7A+7B complete. Mock mode added for offline UI development. 7C-7E in progress. |
+| 1.7 | 2026-02-06 | 7A+7B complete. Mock mode added. |
+| 1.8 | 2026-02-07 | Phase 7 complete. All screens working — effect browser, palette browser, color picker, power toggle, full navigation. GitHub workflow established. PDP moved to repo. |
