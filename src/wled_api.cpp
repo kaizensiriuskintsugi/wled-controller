@@ -1,7 +1,6 @@
 #include "wled_api.h"
 
-// ===== COMMON EFFECT NAMES (used by both modes) =====
-// 20 common WLED effects for browsing UI
+// ===== COMMON EFFECT NAMES =====
 static const char* EFFECT_NAMES[] = {
     "Solid",           // 0
     "Blink",           // 1
@@ -63,6 +62,68 @@ const char* wled_get_effect_name(int id) {
     return "Unknown";
 }
 
+// ===== COMMON PALETTE NAMES =====
+static const char* PALETTE_NAMES[] = {
+    "Default",         // 0
+    "Random Cycle",    // 1
+    "Color 1",         // 2
+    "Color 1+2",       // 3
+    "Color Gradient",  // 4
+    "Color 1+2+3",     // 5
+    "Party",           // 6
+    "Cloud",           // 7
+    "Lava",            // 8
+    "Ocean",           // 9
+    "Forest",          // 10
+    "Rainbow",         // 11
+    "Rainbow Bands",   // 12
+    "Sunset",          // 13
+    "Rivendell",       // 14
+    "Breeze",          // 15
+    "Red & Blue",      // 16
+    "Yellowout",       // 17
+    "Analogous",       // 18
+    "Splash",          // 19
+    "Pastel",          // 20
+    "Sunset 2",        // 21
+    "Beach",           // 22
+    "Vintage",         // 23
+    "Departure",       // 24
+    "Landscape",       // 25
+    "Beech",           // 26
+    "Sherbet",         // 27
+    "Hult",            // 28
+    "Hult 64",         // 29
+    "Drywet",          // 30
+    "Jul",             // 31
+    "Grintage",        // 32
+    "Rewhi",           // 33
+    "Tertiary",        // 34
+    "Fire",            // 35
+    "Icefire",         // 36
+    "Cyane",           // 37
+    "Light Pink",      // 38
+    "Autumn",          // 39
+    "Magenta",         // 40
+    "Magred",          // 41
+    "Yelmag",          // 42
+    "Yelblu",          // 43
+    "Orange & Teal",   // 44
+    "Tiamat",          // 45
+    "April Night",     // 46
+    "Orangery",        // 47
+    "C9",              // 48
+    "Sakura"           // 49
+};
+static const int KNOWN_PALETTES_COUNT = 50;
+
+const char* wled_get_palette_name(int id) {
+    if (id >= 0 && id < KNOWN_PALETTES_COUNT) {
+        return PALETTE_NAMES[id];
+    }
+    return "Unknown";
+}
+
 #ifdef MOCK_MODE
 
 // ===== MOCK MODE — No real HTTP =====
@@ -119,7 +180,7 @@ int wled_get_effects_count(const char* ip) {
 }
 
 int wled_get_palettes_count(const char* ip) {
-    return 15;
+    return KNOWN_PALETTES_COUNT;
 }
 
 #else

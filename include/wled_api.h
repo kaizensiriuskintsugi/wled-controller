@@ -37,7 +37,8 @@ WledState wled_get_state(const char* ip);
 int wled_get_effects_count(const char* ip);
 int wled_get_palettes_count(const char* ip);
 
-// Get effect name by ID (returns "Unknown" if out of range)
+// Get names by ID (returns "Unknown" if out of range)
 const char* wled_get_effect_name(int id);
+const char* wled_get_palette_name(int id);
 
 #endif

@@ -9,7 +9,8 @@ enum Screen {
     SCREEN_DEVICE_LIST,
     SCREEN_DEVICE_CONTROL,
     SCREEN_EFFECT_BROWSER,
-    SCREEN_PALETTE_BROWSER
+    SCREEN_PALETTE_BROWSER,
+    SCREEN_COLOR_PICKER
 };
 
 // Initialize UI (call after all other modules init)
