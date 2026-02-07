@@ -29,7 +29,7 @@ const char* wifi_get_ip() {
 #include <WiFi.h>
 
 const char* WIFI_SSID = "TELUS1201";
-const char* WIFI_PASS = "YOUR_PASSWORD_HERE";
+const char* WIFI_PASS = "bbCk4fsYVJXA";
 
 static unsigned long lastReconnectAttempt = 0;
 static const unsigned long RECONNECT_INTERVAL = 5000;

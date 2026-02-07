@@ -25,6 +25,12 @@ static int pendingBrightness = -1;
 static unsigned long lastBriSend = 0;
 #define BRI_SEND_INTERVAL_MS 100
 
+// Effect browser state
+static int effectIndex = 0;
+static int effectScrollOffset = 0;
+static int effectCount = 0;
+static int effectEncAccum = 0;
+
 // Display layout
 #define VISIBLE_ITEMS 4
 #define LIST_START_Y 60
@@ -34,16 +40,16 @@ static unsigned long lastBriSend = 0;
 // Arc settings
 #define ARC_CENTER_Y 115
 #define ARC_RADIUS 95
-#define ARC_THICKNESS 3  // draws radius-3 to radius+3 = 7px wide
+#define ARC_THICKNESS 3
 
 // ===== HELPERS =====
 
 static void switchScreen(Screen next) {
-    // Force full clear on every screen transition
     display_clear();
     currentScreen = next;
     needsRedraw = true;
     encAccum = 0;
+    effectEncAccum = 0;
     Serial.printf("[UI] Screen → %d\n", next);
 }
 
@@ -56,7 +62,6 @@ static void drawArc(int brightness) {
         float rad = (arcStart + a) * DEG_TO_RAD;
         uint16_t color = (a < arcAngle) ? COLOR_ACCENT : COLOR_DIM;
 
-        // Draw multiple radii for thickness
         for (int r = -ARC_THICKNESS; r <= ARC_THICKNESS; r++) {
             int x = LIST_X + cos(rad) * (ARC_RADIUS + r);
             int y = ARC_CENTER_Y + sin(rad) * (ARC_RADIUS + r);
@@ -172,49 +177,44 @@ static void drawDeviceControl() {
         return;
     }
 
-    // Device name
     tft.setTextDatum(MC_DATUM);
     tft.setTextColor(COLOR_ACCENT);
     tft.drawString(activeDevice->name, LIST_X, 25, 2);
 
-    // Power indicator
     tft.setTextColor(deviceState.on ? COLOR_SUCCESS : COLOR_ERROR);
     tft.drawString(deviceState.on ? "ON" : "OFF", LIST_X, 45, 2);
 
-    // Brightness — big number
     int bri = (pendingBrightness >= 0) ? pendingBrightness : deviceState.brightness;
     tft.setTextColor(COLOR_TEXT);
     tft.setTextDatum(MC_DATUM);
     tft.drawString(String(bri), LIST_X, 100, 7);
 
-    // Brightness arc
     drawArc(bri);
 
-    // Effect and palette
+    // Effect name instead of just ID
     tft.setTextColor(COLOR_DIM);
     tft.setTextDatum(MC_DATUM);
-    tft.drawString("FX: " + String(deviceState.effectId), LIST_X, 185, 2);
+    String fxLabel = "FX: " + String(wled_get_effect_name(deviceState.effectId));
+    tft.drawString(fxLabel, LIST_X, 185, 2);
     tft.drawString("PAL: " + String(deviceState.paletteId), LIST_X, 200, 2);
 }
+
 static void drawBrightnessOnly() {
     TFT_eSPI& tft = display_get_tft();
 
     int bri = (pendingBrightness >= 0) ? pendingBrightness : deviceState.brightness;
 
-    // Clear brightness number area
     tft.fillRect(20, 70, 200, 60, COLOR_BG);
     tft.setTextColor(COLOR_TEXT);
     tft.setTextDatum(MC_DATUM);
     tft.drawString(String(bri), LIST_X, 100, 7);
 
-    // Redraw arc fully (overwrites old pixels)
     drawArc(bri);
 }
 
 static void handleDeviceControlInput() {
     if (!activeDevice) return;
 
-    // Encoder = brightness
     int delta = input_encoder_delta();
     if (delta != 0) {
         if (pendingBrightness < 0) pendingBrightness = deviceState.brightness;
@@ -230,9 +230,15 @@ static void handleDeviceControlInput() {
         }
     }
 
-    // Encoder short press = effect browser (Phase 7C)
+    // Encoder short press = effect browser
     if (input_button_pressed()) {
-        Serial.println("[UI] Button — effect browser (coming in 7C)");
+        Serial.println("[UI] Button — entering effect browser");
+        effectCount = wled_get_effects_count(activeDevice->ip);
+        effectIndex = deviceState.effectId;  // start on current effect
+        effectScrollOffset = max(0, effectIndex - 1);  // show current near top
+        effectEncAccum = 0;
+        switchScreen(SCREEN_EFFECT_BROWSER);
+        return;
     }
 
     // Encoder long press = identify device
@@ -246,16 +252,15 @@ static void handleDeviceControlInput() {
         wled_set_brightness(activeDevice->ip, 255);
         delay(300);
         wled_set_brightness(activeDevice->ip, origBri);
-        needsRedraw = true;  // refresh after flash
+        needsRedraw = true;
     }
 
-    // Touch gestures
     Gesture g = input_gesture();
     if (g == GESTURE_SWIPE_DOWN) {
         Serial.println("[UI] Swipe down — back to list");
         pendingBrightness = -1;
         switchScreen(SCREEN_DEVICE_LIST);
-        return;  // exit immediately, don't process more this frame
+        return;
     }
     if (g == GESTURE_SWIPE_LEFT) {
         Serial.println("[UI] Swipe left — palette browser (coming in 7D)");
@@ -273,13 +278,118 @@ static void handleDeviceControlInput() {
         needsRedraw = true;
     }
 
-    // Periodic state refresh
     if (millis() - lastStateRefresh > STATE_REFRESH_MS) {
         deviceState = wled_get_state(activeDevice->ip);
         lastStateRefresh = millis();
         if (pendingBrightness < 0) {
             needsRedraw = true;
         }
+    }
+}
+
+// ===== EFFECT BROWSER SCREEN =====
+
+static void drawEffectBrowser() {
+    TFT_eSPI& tft = display_get_tft();
+    tft.fillScreen(COLOR_BG);
+
+    // Title
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(COLOR_ACCENT);
+    tft.drawString("Effects", LIST_X, 25, 4);
+
+    if (effectCount == 0) {
+        tft.setTextColor(COLOR_DIM);
+        tft.drawString("No effects", LIST_X, 120, 2);
+        return;
+    }
+
+    // List items
+    for (int i = 0; i < VISIBLE_ITEMS && (i + effectScrollOffset) < effectCount; i++) {
+        int fxIdx = i + effectScrollOffset;
+        int y = LIST_START_Y + (i * LIST_ITEM_HEIGHT);
+
+        const char* name = wled_get_effect_name(fxIdx);
+
+        if (fxIdx == effectIndex) {
+            // Highlighted selection
+            tft.setTextColor(COLOR_ACCENT);
+            tft.setTextDatum(ML_DATUM);
+            tft.drawString(">", 15, y + 12, 2);
+            tft.setTextDatum(MC_DATUM);
+
+            // Show ID + name for selected item
+            String label = "#" + String(fxIdx) + " " + String(name);
+            tft.drawString(label, LIST_X + 5, y + 12, 2);
+        } else if (fxIdx == deviceState.effectId) {
+            // Current active effect on device — show in green
+            tft.setTextColor(COLOR_SUCCESS);
+            tft.setTextDatum(MC_DATUM);
+            String label = "#" + String(fxIdx) + " " + String(name);
+            tft.drawString(label, LIST_X + 5, y + 12, 2);
+        } else {
+            tft.setTextColor(COLOR_TEXT);
+            tft.setTextDatum(MC_DATUM);
+            String label = "#" + String(fxIdx) + " " + String(name);
+            tft.drawString(label, LIST_X + 5, y + 12, 2);
+        }
+    }
+
+    // Position indicator
+    tft.setTextColor(COLOR_DIM);
+    tft.setTextDatum(MC_DATUM);
+    String pos = String(effectIndex) + "/" + String(effectCount - 1);
+    tft.drawString(pos, LIST_X, 220, 2);
+}
+
+static void handleEffectBrowserInput() {
+    if (effectCount == 0) return;
+
+    // Encoder = scroll through effects
+    int delta = input_encoder_delta();
+    if (delta != 0) {
+        effectEncAccum += delta;
+
+        int move = 0;
+        if (effectEncAccum >= ENC_LIST_THRESHOLD) {
+            move = 1;
+            effectEncAccum = 0;
+        } else if (effectEncAccum <= -ENC_LIST_THRESHOLD) {
+            move = -1;
+            effectEncAccum = 0;
+        }
+
+        if (move != 0) {
+            effectIndex += move;
+            if (effectIndex < 0) effectIndex = 0;
+            if (effectIndex >= effectCount) effectIndex = effectCount - 1;
+
+            // Keep selection visible
+            if (effectIndex < effectScrollOffset) {
+                effectScrollOffset = effectIndex;
+            }
+            if (effectIndex >= effectScrollOffset + VISIBLE_ITEMS) {
+                effectScrollOffset = effectIndex - VISIBLE_ITEMS + 1;
+            }
+            needsRedraw = true;
+        }
+    }
+
+    // Encoder press = select effect and return to control
+    if (input_button_pressed()) {
+        Serial.printf("[UI] Effect selected: #%d %s\n", effectIndex, wled_get_effect_name(effectIndex));
+        wled_set_effect(activeDevice->ip, effectIndex);
+        deviceState.effectId = effectIndex;  // update local state immediately
+        switchScreen(SCREEN_DEVICE_CONTROL);
+        return;
+    }
+
+    // Swipe down = cancel, back to control without changing
+    Gesture g = input_gesture();
+    if (g == GESTURE_SWIPE_DOWN) {
+        Serial.println("[UI] Swipe down — back to control (no change)");
+        switchScreen(SCREEN_DEVICE_CONTROL);
+        return;
     }
 }
 
@@ -303,6 +413,9 @@ void ui_update() {
         case SCREEN_DEVICE_CONTROL:
             handleDeviceControlInput();
             break;
+        case SCREEN_EFFECT_BROWSER:
+            handleEffectBrowserInput();
+            break;
         default:
             break;
     }
@@ -315,6 +428,9 @@ void ui_update() {
                 break;
             case SCREEN_DEVICE_CONTROL:
                 drawDeviceControl();
+                break;
+            case SCREEN_EFFECT_BROWSER:
+                drawEffectBrowser();
                 break;
             default:
                 break;

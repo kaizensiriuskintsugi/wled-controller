@@ -1,10 +1,72 @@
 #include "wled_api.h"
 
+// ===== COMMON EFFECT NAMES (used by both modes) =====
+// 20 common WLED effects for browsing UI
+static const char* EFFECT_NAMES[] = {
+    "Solid",           // 0
+    "Blink",           // 1
+    "Breathe",         // 2
+    "Wipe",            // 3
+    "Wipe Random",     // 4
+    "Random Colors",   // 5
+    "Sweep",           // 6
+    "Dynamic",         // 7
+    "Colorloop",       // 8
+    "Rainbow",         // 9
+    "Scan",            // 10
+    "Scan Dual",       // 11
+    "Fade",            // 12
+    "Theater",         // 13
+    "Theater Rainbow", // 14
+    "Running",         // 15
+    "Twinkle",         // 16
+    "Dissolve",        // 17
+    "Dissolve Rnd",    // 18
+    "Sparkle",         // 19
+    "Sparkle Dark",    // 20
+    "Sparkle+",        // 21
+    "Strobe",          // 22
+    "Strobe Rainbow",  // 23
+    "Strobe Mega",     // 24
+    "Android",         // 25
+    "Chase",           // 26
+    "Chase Random",    // 27
+    "Chase Rainbow",   // 28
+    "Chase Flash",     // 29
+    "Chase Flash Rnd", // 30
+    "Rainbow Runner",  // 31
+    "Colorful",        // 32
+    "Traffic Light",   // 33
+    "Sweep Random",    // 34
+    "Chase 2",         // 35
+    "Aurora",          // 36
+    "Stream",          // 37
+    "Scanner",         // 38
+    "Lighthouse",      // 39
+    "Fireworks",       // 40
+    "Rain",            // 41
+    "Tetrix",          // 42
+    "Fire Flicker",    // 43
+    "Gradient",        // 44
+    "Loading",         // 45
+    "Police",          // 46
+    "Fairy",           // 47
+    "Two Dots",        // 48
+    "Fairy Twinkle"    // 49
+};
+static const int KNOWN_EFFECTS_COUNT = 50;
+
+const char* wled_get_effect_name(int id) {
+    if (id >= 0 && id < KNOWN_EFFECTS_COUNT) {
+        return EFFECT_NAMES[id];
+    }
+    return "Unknown";
+}
+
 #ifdef MOCK_MODE
 
 // ===== MOCK MODE — No real HTTP =====
 
-// Simulated device state (shared across all mock devices)
 static uint8_t mockBrightness = 128;
 static uint8_t mockEffect = 0;
 static uint8_t mockPalette = 0;
@@ -53,11 +115,11 @@ WledState wled_get_state(const char* ip) {
 }
 
 int wled_get_effects_count(const char* ip) {
-    return 20;  // Mock: 20 effects
+    return KNOWN_EFFECTS_COUNT;
 }
 
 int wled_get_palettes_count(const char* ip) {
-    return 15;  // Mock: 15 palettes
+    return 15;
 }
 
 #else
