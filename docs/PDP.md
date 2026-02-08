@@ -299,6 +299,25 @@ docs/
 - If PDP says complete but repo code doesn't match → PDP was updated prematurely
 - New Claude sessions pull from GitHub raw URLs to verify actual state
 
+### GitHub Desktop Workflow
+- GitHub Desktop has a **two-step process**: Commit (bottom left button) then Push (top bar "Push origin")
+- **Commit** = saves to local Git history only. **Push** = sends to GitHub remote.
+- Forgetting to Push is silent — GitHub Desktop shows "Fetch origin" as if everything is synced
+- After committing, always verify the top bar changes from "Push origin ↑1" to "Fetch origin"
+- **Verification:** `git log --oneline -5` in terminal shows local commits. If `origin/main` appears next to the latest commit, the push landed.
+
+### raw.githubusercontent.com CDN Cache
+- GitHub's raw file CDN can serve stale content for up to 5 minutes after a push
+- If Claude pulls files immediately after a push and sees old code, wait a few minutes and re-pull
+- Don't assume the push failed based on stale CDN content alone
+- **Better verification:** Check github.com in browser (not raw URLs) or use `git log` to confirm
+```
+
+Drop that into the workflow section, save, then run those three commands in terminal:
+```
+git add docs/PDP.md
+git commit -m "PDP v1.9: Phase 8 planned as A/B/C sub-phases, Git workflow lessons"
+git push
 ---
 
 ## VERSION HISTORY
