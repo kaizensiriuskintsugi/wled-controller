@@ -1,6 +1,6 @@
 /*
  * WLED Touchscreen Controller
- * Phase 7: UI Integration
+ * Phase 8A: Refinements
  */
 
 #include <Arduino.h>
@@ -44,13 +44,15 @@ void setup() {
         delay(1000);
     } else {
         display_boot_status("WiFi Failed", "Check credentials");
-        while (true) delay(1000);  // Halt
+        delay(3000);
+        // Don't halt — allow UI to show device list (empty) with rescan option
     }
 
     // Input
     input_init();
 
-    // UI
+    // UI — will auto-connect to last device if found
+    display_boot_status("Loading UI...");
     ui_init();
 }
 

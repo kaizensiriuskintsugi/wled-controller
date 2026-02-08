@@ -14,6 +14,7 @@ enum Screen {
 };
 
 // Initialize UI (call after all other modules init)
+// Checks NVS for last device and auto-connects if found
 void ui_init();
 
 // Call every loop — handles input routing and screen updates
