@@ -1,9 +1,9 @@
 # WLED TOUCHSCREEN CONTROLLER
-## Product Development Plan v1.8
+## Product Development Plan v1.9
 
 **Created:** February 4, 2026
 **Updated:** February 7, 2026
-**Status:** Phase 7 Complete — All UI screens working, hardware validated
+**Status:** Phase 7 Complete — Ready for Phase 8
 **Platform:** Waveshare ESP32-S3-Touch-LCD-1.28
 
 ---
@@ -39,7 +39,9 @@ This controller shares the same hardware and many of the same patterns as the pl
 | 7D | UI: Palette Browser | ✅ Complete | 50 named palettes, shared browser pattern |
 | 7E | UI: Color Picker | ✅ Complete | HSV hue ring, touch select, encoder saturation |
 | 7F | UI: Power & Navigation | ✅ Complete | Swipe up power toggle, all gestures wired |
-| 8 | Polish | ⬜ Pending | Persistence, multi-device, error handling |
+| 8A | Refinements | ⬜ Pending | Cache, NVS, boot sequence, error handling, rescan |
+| 8B | Unified Control Screen | ⬜ Pending | All-in-one control, staged edits, send on confirm |
+| 8C | Groups & Presets | ⬜ Pending | Device groups, presets, batch commands |
 
 ---
 
@@ -76,7 +78,7 @@ src/
 include/
   wifi_manager.h / discovery.h / wled_api.h / display.h / input.h / ui.h
 docs/
-  WLED-Controller-PDP-v1.8.md — This file
+  PDP.md              — This file
 ```
 
 ### Module Responsibilities
@@ -94,8 +96,6 @@ docs/
 ---
 
 ## COMPLETED PHASES (1-6)
-
-See PDP v1.6 for full details on completed phases.
 
 ### Key Learnings Carried Forward
 - CH343P = UART, not native USB CDC — `CDC_ON_BOOT=0`
@@ -135,68 +135,77 @@ See PDP v1.6 for full details on completed phases.
 | Color Picker | Encoder Press | Apply color → Device Control |
 | Color Picker | Swipe Down | Cancel → Device Control |
 
-### 7A: Device List
-- Scrollable with encoder accumulator (threshold 4)
-- Tap or encoder press to select device
-- Fetches device state on selection
-
-### 7B: Device Control
-- Large brightness number with arc visualization
-- Effect and palette names displayed (not just IDs)
-- ON/OFF status indicator
-- Partial redraw for brightness changes (no full screen flicker)
-
-### 7C: Effect Browser
-- 50 named effects in shared lookup table
-- Generic `drawBrowserList()` / `handleBrowserInput()` reused by palette browser
-- Current active effect shown in green
-- Position indicator at bottom
-
-### 7D: Palette Browser
-- 50 named palettes in shared lookup table
-- Identical interaction pattern to effect browser (code reuse)
-- Entered via swipe left from control screen
-
-### 7E: Color Picker
-- HSV hue ring rendered pixel-by-pixel around circular display
-- Touch the ring to select hue angle (atan2 calculation)
-- Encoder adjusts saturation (0-255)
-- Center preview circle shows selected color
-- Indicator dot tracks position, erases cleanly on move
-- Encoder press confirms → converts HSV to RGB → sends to device
-
-### 7F: Power & Navigation
-- Swipe up on control screen toggles power
-- All gesture transitions wired and tested
-- Swipe down is universal "back/cancel" gesture
-
 ### Phase 7 Key Learnings
 - Generic browser functions eliminate duplicate code — effect and palette browsers share 100% of scroll/select logic
 - HSV color model maps naturally to circular display (angle = hue)
 - Indicator cleanup requires tracking old position and redrawing ring segment
-- Swipe speed sensitivity affects gesture detection — noted for refinement
-- Control responsiveness has room for improvement — noted for refinement
+- 50 named effects and 50 named palettes in lookup tables; falls back to ID for higher numbers
+- Code was rebuilt in v1.9 after context loss between sessions — PDP spec was detailed enough to reconstruct from
+- **Git lesson:** Always commit working code BEFORE updating the PDP to mark it complete
 
 ---
 
-## PHASE 8: POLISH & EXPANSION
+## PHASE 8A: REFINEMENTS ⬜ PENDING
+
+**Goal:** Foundation improvements that make the controller reliable and responsive.
 
 ### Tasks
-- [ ] Settings persistence via NVS (last device, brightness, preferences)
-- [ ] Boot sequence: connect WiFi → scan → restore last device → show control
 - [ ] Cache effect/palette counts per device (avoid HTTP round-trip on each browser entry)
-- [ ] Group control: select multiple devices, control simultaneously
-- [ ] Preset save/recall: store favorite combinations
+- [ ] NVS persistence (last selected device, brightness, preferences)
+- [ ] Smart boot sequence: WiFi → scan → restore last device → show control
 - [ ] Error handling: WiFi lost, device unreachable, scan empty
-- [ ] Rescan capability from UI
-- [ ] AP mode for field use
-- [ ] Power: battery monitoring if on LiPo
+- [ ] Rescan capability from device list screen (gesture or long press)
+- [ ] Swipe sensitivity improvements (fast swipes sometimes missed)
+- [ ] General input responsiveness refinement
 
-### Refinement Backlog (UX Issues Noted During Phase 7)
-- [ ] Swipe speed sensitivity — fast swipes sometimes not detected
-- [ ] Control responsiveness — general input feel improvements
-- [ ] Effect/palette browser entry lag — HTTP fetch for count on every entry
-- [ ] Additional UX ideas from hands-on testing (to be captured)
+---
+
+## PHASE 8B: UNIFIED CONTROL SCREEN ⬜ PENDING
+
+**Goal:** Single screen showing all controllable parameters at once with staged editing.
+
+### Concept
+- Replace the current multi-screen navigation (separate screens for effects, palettes, color) with a single unified control view
+- All parameters visible simultaneously: brightness, power, color, effect, palette
+- **Staged edits:** Changes are composed locally, not sent immediately
+- **Send on confirm:** One action pushes all staged changes to the device at once
+- Eliminates the "artwork flickering through half-states" problem during adjustment
+- Visual design to be created by Kaizen — layout driven by the round 240x240 display constraints
+
+### Tasks
+- [ ] Kaizen designs the visual layout for the unified screen
+- [ ] Implement unified control screen
+- [ ] Staged state buffer (local copy of desired state, separate from live device state)
+- [ ] Visual diff indicators (show what's changed vs current device state)
+- [ ] Confirm action sends all staged changes in one API call
+- [ ] Navigation: how to enter/exit and interact with each parameter area
+
+### Design Considerations
+- 240x240 round display — tight real estate
+- Need to show 5 parameters: brightness, power, color, effect name, palette name
+- Touch + encoder interaction model for editing individual values
+- Clear visual distinction between "current on device" and "staged change"
+
+---
+
+## PHASE 8C: DEVICE GROUPS & PRESETS ⬜ PENDING
+
+**Goal:** Control multiple devices as a unit and save/recall favorite configurations.
+
+### Tasks
+- [ ] Create named device groups (e.g., "North Wall", "All Beacons")
+- [ ] Group selection UI — choose a group to control
+- [ ] Group control: staged changes sent to all devices in group simultaneously
+- [ ] Preset save: snapshot current settings for a device or group
+- [ ] Preset recall: apply a saved preset to a device or group
+- [ ] NVS storage for groups and presets
+- [ ] Group/preset management UI (create, edit, delete)
+
+### Design Considerations
+- Groups are collections of device IPs/names
+- Presets are snapshots: brightness, effect, palette, color, power state
+- A preset can be applied to any device or group (not tied to specific hardware)
+- NVS has limited space — need to consider how many groups/presets to support
 
 ---
 
@@ -261,6 +270,9 @@ See PDP v1.6 for full details on completed phases.
 | 2026-02-07 | Swipe up for power toggle | Intuitive — swipe up = wake/power |
 | 2026-02-07 | Validate on hardware before Git commit | Ensures repo always has working code |
 | 2026-02-07 | PDP lives in repo (docs/) | Documentation stays with the code it describes |
+| 2026-02-07 | Staged edits for unified control | Compose a look before sending — no half-state flicker on art |
+| 2026-02-07 | Device groups for batch control | Art installations need coordinated multi-device changes |
+| 2026-02-07 | Break Phase 8 into A/B/C | Refinements → Unified UI → Groups/Presets progression |
 
 ---
 
@@ -281,6 +293,12 @@ See PDP v1.6 for full details on completed phases.
 - **Tool:** GitHub Desktop for commit/push
 - **Context continuity:** Claude fetches current code from raw GitHub URLs at conversation start
 
+### Context Loss Prevention
+- Always commit working code BEFORE updating PDP status
+- PDP describes what IS committed, not what was tested and lost
+- If PDP says complete but repo code doesn't match → PDP was updated prematurely
+- New Claude sessions pull from GitHub raw URLs to verify actual state
+
 ---
 
 ## VERSION HISTORY
@@ -295,4 +313,27 @@ See PDP v1.6 for full details on completed phases.
 | 1.5 | 2026-02-05 | Phase 6 complete. All inputs working. |
 | 1.6 | 2026-02-05 | Phase 7 broken into sub-phases 7A-7E. |
 | 1.7 | 2026-02-06 | 7A+7B complete. Mock mode added. |
-| 1.8 | 2026-02-07 | Phase 7 complete. All screens working — effect browser, palette browser, color picker, power toggle, full navigation. GitHub workflow established. PDP moved to repo. |
+| 1.8 | 2026-02-07 | Phase 7 marked complete (but code not fully committed — context loss issue). |
+| 1.9 | 2026-02-07 | Phase 7 rebuilt and validated on hardware. Phase 8 planned as A/B/C sub-phases. Added context loss prevention notes to workflow. |
+
+---
+
+## HANDOFF NOTES FOR NEXT SESSION
+
+**Where we stopped:** Phase 7 fully rebuilt and validated on hardware. PDP updated to v1.9. Ready for Phase 8A.
+
+**Current working state:**
+- All screens functional: device list, control, effect browser, palette browser, color picker
+- All gestures wired: swipe up (power), down (back), left (palette), right (color), encoder press (effects)
+- Identify device via long press (encoder or touch)
+
+**Next session starts with Phase 8A:**
+1. Cache effect/palette counts (kill browser entry lag)
+2. NVS persistence (last device, brightness)
+3. Smart boot sequence
+4. Error handling
+5. Rescan from UI
+
+**Then Phase 8B:** Unified control screen — Kaizen designs the layout, Claude implements.
+
+**Then Phase 8C:** Device groups and presets for batch art installation control.
