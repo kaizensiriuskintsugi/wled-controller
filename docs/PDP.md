@@ -1,10 +1,12 @@
 # WLED TOUCHSCREEN CONTROLLER
-## Product Development Plan v1.9
+## Product Development Plan v2.0
 
 **Created:** February 4, 2026
-**Updated:** February 7, 2026
-**Status:** Phase 7 Complete — Ready for Phase 8
+**Updated:** February 8, 2026
+**Status:** Phase 8B Design Complete — Ready for 8B Implementation
 **Platform:** Waveshare ESP32-S3-Touch-LCD-1.28
+
+**See also:** `docs/SOP.md` for development workflow, Git procedures, and hardware lessons.
 
 ---
 
@@ -39,31 +41,15 @@ This controller shares the same hardware and many of the same patterns as the pl
 | 7D | UI: Palette Browser | ✅ Complete | 50 named palettes, shared browser pattern |
 | 7E | UI: Color Picker | ✅ Complete | HSV hue ring, touch select, encoder saturation |
 | 7F | UI: Power & Navigation | ✅ Complete | Swipe up power toggle, all gestures wired |
-| 8A | Refinements | ⬜ Pending | Cache, NVS, boot sequence, error handling, rescan |
-| 8B | Unified Control Screen | ⬜ Pending | All-in-one control, staged edits, send on confirm |
-| 8C | Groups & Presets | ⬜ Pending | Device groups, presets, batch commands |
-
----
-
-## MOCK MODE
-
-**Purpose:** Enables UI development without WiFi or WLED devices present.
-
-**Activation:** Add `-DMOCK_MODE=1` to platformio.ini build_flags
-**Deactivation:** Remove or comment out the flag (don't set to 0 — ifdef checks existence, not value)
-
-**What it does:**
-- WiFi: Skips real connection, reports "Mock WiFi" connected
-- Discovery: Populates 5 fake devices (Lighthouse-Main, Beacon-North, etc.)
-- WLED API: Returns fake state, logs writes to serial
-- UI: Works identically — doesn't know the difference
+| 8A | Refinements | ✅ Complete | Caching, NVS persistence, smart boot, error handling, rescan |
+| 8B | Unified Control Design | ✅ Complete | 9-view architecture, all overlays designed, sizing validated |
+| 8B | Unified Control Build | ⬜ Pending | Implementation from spec |
+| 8C | Device Groups | ⬜ Pending | Group storage, UDP sync, manage UI |
+| 8D | Presets | ⬜ Pending | Save/recall, MIDI grid (future) |
 
 ---
 
 ## ARCHITECTURE
-
-### Modular Design Principle
-One feature per file. Modules don't know about each other. The UI layer is the only thing that connects them.
 
 ### File Structure
 ```
@@ -78,41 +64,30 @@ src/
 include/
   wifi_manager.h / discovery.h / wled_api.h / display.h / input.h / ui.h
 docs/
-  PDP.md              — This file
+  PDP.md                        — This file (project status, phases, decisions)
+  SOP.md                        — Development workflow, Git procedures, hardware lessons
+  UNIFIED-CONTROL-SPEC.md       — Phase 8B implementation blueprint
+  unified-control-v6.html       — Visual mockup reference (open in browser)
 ```
 
-### Module Responsibilities
-
-| Module | Knows About | Does Not Know About |
-|--------|-------------|---------------------|
-| wifi_manager | WiFi library | Display, WLED, UI |
-| discovery | WiFi (needs connection) | Display, input, UI |
-| wled_api | WiFi (sends HTTP) | Display, input, UI |
-| display | TFT_eSPI | WiFi, WLED, input |
-| input | GPIO pins | Display, WiFi, WLED |
-| ui | All modules | — (this is the glue) |
-| main | All modules (init/update) | Internal module details |
+### Module Architecture
+See `docs/SOP.md` → Modular Architecture Rules for the dependency matrix.
 
 ---
 
-## COMPLETED PHASES (1-6)
+## COMPLETED PHASES (1-7)
 
-### Key Learnings Carried Forward
-- CH343P = UART, not native USB CDC — `CDC_ON_BOOT=0`
-- WLED /json/info needs DynamicJsonDocument(4096)
-- Must match poi project platformio.ini exactly
-- DynamicJsonDocument(8192) for effects list
-- Never end test sequences on full white
-- CST816S gesture lockout until finger lift
-- Consume-on-read input pattern prevents double-processing
-- Two-pass rendering (input then draw) prevents screen transition bugs
-- Encoder accumulator with threshold for list scrolling
+### Phases 1-6 Summary
+- Project skeleton with PlatformIO, verified build flags
+- WiFi connection with reconnect handling
+- mDNS device discovery (7 WLED devices on network)
+- GC9A01 round display working with TFT_eSPI
+- Full WLED JSON API (228 effects, 75 palettes, all commands verified)
+- Encoder (interrupt-driven, direction corrected), touch (CST816S with gesture lockout), all inputs consume-on-read
 
----
+### Phase 7: UI Integration ✅ COMPLETE
 
-## PHASE 7: UI INTEGRATION ✅ COMPLETE
-
-### Full Navigation Map (All Validated on Hardware)
+**Navigation Map (Current — Will Be Replaced by 8B)**
 
 | From | Action | To |
 |------|--------|----|
@@ -124,88 +99,77 @@ docs/
 | Device Control | Swipe Up | Toggle Power ON/OFF |
 | Device Control | Swipe Down | Device List |
 | Device Control | Long Press (enc/touch) | Identify Device (pulse) |
-| Effect Browser | Encoder Rotate | Scroll list |
-| Effect Browser | Encoder Press | Apply effect → Device Control |
-| Effect Browser | Swipe Down | Cancel → Device Control |
-| Palette Browser | Encoder Rotate | Scroll list |
-| Palette Browser | Encoder Press | Apply palette → Device Control |
-| Palette Browser | Swipe Down | Cancel → Device Control |
-| Color Picker | Touch ring | Select hue |
-| Color Picker | Encoder Rotate | Adjust saturation |
-| Color Picker | Encoder Press | Apply color → Device Control |
-| Color Picker | Swipe Down | Cancel → Device Control |
+| Effect Browser | Encoder Rotate/Press | Scroll / Apply → Control |
+| Palette Browser | Encoder Rotate/Press | Scroll / Apply → Control |
+| Color Picker | Touch ring / Encoder | Select hue / Adjust saturation |
 
-### Phase 7 Key Learnings
+**Key Learnings:**
 - Generic browser functions eliminate duplicate code — effect and palette browsers share 100% of scroll/select logic
 - HSV color model maps naturally to circular display (angle = hue)
-- Indicator cleanup requires tracking old position and redrawing ring segment
 - 50 named effects and 50 named palettes in lookup tables; falls back to ID for higher numbers
-- Code was rebuilt in v1.9 after context loss between sessions — PDP spec was detailed enough to reconstruct from
-- **Git lesson:** Always commit working code BEFORE updating the PDP to mark it complete
+- Code was rebuilt after context loss between sessions — PDP spec was detailed enough to reconstruct from
+- **Git lesson:** Always commit working code BEFORE updating the PDP to mark it complete (see SOP)
 
 ---
 
-## PHASE 8A: REFINEMENTS ⬜ PENDING
+## PHASE 8A: REFINEMENTS ✅ COMPLETE
 
-**Goal:** Foundation improvements that make the controller reliable and responsive.
-
-### Tasks
-- [ ] Cache effect/palette counts per device (avoid HTTP round-trip on each browser entry)
-- [ ] NVS persistence (last selected device, brightness, preferences)
-- [ ] Smart boot sequence: WiFi → scan → restore last device → show control
-- [ ] Error handling: WiFi lost, device unreachable, scan empty
-- [ ] Rescan capability from device list screen (gesture or long press)
-- [ ] Swipe sensitivity improvements (fast swipes sometimes missed)
-- [ ] General input responsiveness refinement
+### Completed
+- [x] Effect/palette count caching (avoid HTTP round-trip on browser entry)
+- [x] NVS persistence (last device, brightness, effect restored on boot)
+- [x] Smart boot sequence (WiFi → scan → restore last device → show control)
+- [x] Error handling (WiFi lost, device unreachable, scan empty)
+- [x] Rescan capability from device list
+- [x] Swipe sensitivity improvements
 
 ---
 
-## PHASE 8B: UNIFIED CONTROL SCREEN ⬜ PENDING
+## PHASE 8B: UNIFIED CONTROL
 
-**Goal:** Single screen showing all controllable parameters at once with staged editing.
+### Design ✅ COMPLETE
+Full design documented in `docs/UNIFIED-CONTROL-SPEC.md` with visual reference in `docs/unified-control-v6.html`.
 
-### Concept
-- Replace the current multi-screen navigation (separate screens for effects, palettes, color) with a single unified control view
-- All parameters visible simultaneously: brightness, power, color, effect, palette
-- **Staged edits:** Changes are composed locally, not sent immediately
-- **Send on confirm:** One action pushes all staged changes to the device at once
-- Eliminates the "artwork flickering through half-states" problem during adjustment
-- Visual design to be created by Kaizen — layout driven by the round 240x240 display constraints
+**Key design decisions:**
+- 9-view architecture: 1 base screen + 8 overlays
+- Overlay system replaces multi-screen navigation
+- "Stage and send" pattern for batched API updates
+- 14 effect categories for organized browsing
+- Device groups with UDP sync capability
+- Preset save/recall system
+- Color source indicator (palette vs custom color)
+- Focus mode: tap parameter → encoder adjusts → press to exit
 
-### Tasks
-- [ ] Kaizen designs the visual layout for the unified screen
-- [ ] Implement unified control screen
-- [ ] Staged state buffer (local copy of desired state, separate from live device state)
-- [ ] Visual diff indicators (show what's changed vs current device state)
-- [ ] Confirm action sends all staged changes in one API call
-- [ ] Navigation: how to enter/exit and interact with each parameter area
-
-### Design Considerations
-- 240x240 round display — tight real estate
-- Need to show 5 parameters: brightness, power, color, effect name, palette name
-- Touch + encoder interaction model for editing individual values
-- Clear visual distinction between "current on device" and "staged change"
+### Implementation ⬜ PENDING
+Suggested sub-phases from spec:
+- [ ] 8B-1: Overlay framework (state machine, gesture routing)
+- [ ] 8B-2: Main control screen (arc, hero, bars, swatches)
+- [ ] 8B-3: Device panel + groups (multi-select, UDP)
+- [ ] 8B-4: Effect system (categories, drawer, full params)
+- [ ] 8B-5: Presets (save/recall, NVS storage)
 
 ---
 
 ## PHASE 8C: DEVICE GROUPS & PRESETS ⬜ PENDING
 
-**Goal:** Control multiple devices as a unit and save/recall favorite configurations.
-
-### Tasks
+### Device Groups
 - [ ] Create named device groups (e.g., "North Wall", "All Beacons")
-- [ ] Group selection UI — choose a group to control
-- [ ] Group control: staged changes sent to all devices in group simultaneously
-- [ ] Preset save: snapshot current settings for a device or group
-- [ ] Preset recall: apply a saved preset to a device or group
-- [ ] NVS storage for groups and presets
-- [ ] Group/preset management UI (create, edit, delete)
+- [ ] Group selection UI — tap to load, auto-check devices
+- [ ] Group control via UDP unicast (specific devices) or broadcast (all)
+- [ ] NVS storage: `grp_N_name`, `grp_N_devs` (comma-separated device names)
+- [ ] Manage groups UI (create, edit, delete)
+- [ ] Max ~10 groups, ~10 devices per group
 
-### Design Considerations
-- Groups are collections of device IPs/names
-- Presets are snapshots: brightness, effect, palette, color, power state
-- A preset can be applied to any device or group (not tied to specific hardware)
-- NVS has limited space — need to consider how many groups/presets to support
+### Presets
+- [ ] Preset save: snapshot current staged state + name
+- [ ] Preset recall: encoder scroll on main screen preset box
+- [ ] NVS storage: `pre_N_name`, `pre_N_data` (JSON string)
+- [ ] Max ~20 presets
+- [ ] Apply to any device or group (not tied to specific hardware)
+
+### MIDI Grid (Future — Phase 8D or 9)
+- 4×3 trigger pad grid, 4 pages = 48 preset slots
+- Tap to fire preset, long-press to reassign
+- Placeholder in 8B design, implementation deferred
 
 ---
 
@@ -267,57 +231,17 @@ docs/
 | 2026-02-06 | Mock mode via compile flag | Enables UI dev without WiFi/WLED devices |
 | 2026-02-07 | Generic browser functions | Effect + palette browsers share all logic |
 | 2026-02-07 | HSV hue ring for color picker | Natural fit for round display |
-| 2026-02-07 | Swipe up for power toggle | Intuitive — swipe up = wake/power |
 | 2026-02-07 | Validate on hardware before Git commit | Ensures repo always has working code |
-| 2026-02-07 | PDP lives in repo (docs/) | Documentation stays with the code it describes |
-| 2026-02-07 | Staged edits for unified control | Compose a look before sending — no half-state flicker on art |
-| 2026-02-07 | Device groups for batch control | Art installations need coordinated multi-device changes |
-| 2026-02-07 | Break Phase 8 into A/B/C | Refinements → Unified UI → Groups/Presets progression |
+| 2026-02-07 | PDP lives in repo (docs/) | Documentation stays with the code |
+| 2026-02-07 | Staged edits for unified control | Compose a look before sending — no half-state flicker |
+| 2026-02-07 | Break Phase 8 into sub-phases | Refinements → Unified UI → Groups/Presets progression |
+| 2026-02-08 | 9-view overlay architecture | Everything visible on one screen, details in overlays |
+| 2026-02-08 | 14 effect categories | Reduces 228 effects to manageable browsing |
+| 2026-02-08 | Stage and send pattern | Batch changes before transmitting, reduces API calls |
+| 2026-02-08 | UDP for group control | Near-instant sync vs sequential HTTP |
+| 2026-02-08 | Design spec + HTML mockup in repo | Visual reference + text blueprint for implementation |
+| 2026-02-08 | Separate PDP from SOP | Prevent operational lessons being lost during PDP rewrites |
 
----
-
-## DEVELOPMENT WORKFLOW
-
-### Build → Test → Commit Cycle
-1. Claude provides code changes
-2. Paste into VS Code files
-3. Build (✓ button in PlatformIO toolbar)
-4. Upload to board (→ button)
-5. Test on hardware — verify functionality
-6. Refine if needed (repeat 1-5)
-7. **Only after validation:** Commit and push via GitHub Desktop
-
-### GitHub Integration
-- **Repo:** github.com/kaizensiriuskintsugi/wled-controller
-- **Branch:** main
-- **Tool:** GitHub Desktop for commit/push
-- **Context continuity:** Claude fetches current code from raw GitHub URLs at conversation start
-
-### Context Loss Prevention
-- Always commit working code BEFORE updating PDP status
-- PDP describes what IS committed, not what was tested and lost
-- If PDP says complete but repo code doesn't match → PDP was updated prematurely
-- New Claude sessions pull from GitHub raw URLs to verify actual state
-
-### GitHub Desktop Workflow
-- GitHub Desktop has a **two-step process**: Commit (bottom left button) then Push (top bar "Push origin")
-- **Commit** = saves to local Git history only. **Push** = sends to GitHub remote.
-- Forgetting to Push is silent — GitHub Desktop shows "Fetch origin" as if everything is synced
-- After committing, always verify the top bar changes from "Push origin ↑1" to "Fetch origin"
-- **Verification:** `git log --oneline -5` in terminal shows local commits. If `origin/main` appears next to the latest commit, the push landed.
-
-### raw.githubusercontent.com CDN Cache
-- GitHub's raw file CDN can serve stale content for up to 5 minutes after a push
-- If Claude pulls files immediately after a push and sees old code, wait a few minutes and re-pull
-- Don't assume the push failed based on stale CDN content alone
-- **Better verification:** Check github.com in browser (not raw URLs) or use `git log` to confirm
-```
-
-Drop that into the workflow section, save, then run those three commands in terminal:
-```
-git add docs/PDP.md
-git commit -m "PDP v1.9: Phase 8 planned as A/B/C sub-phases, Git workflow lessons"
-git push
 ---
 
 ## VERSION HISTORY
@@ -332,27 +256,8 @@ git push
 | 1.5 | 2026-02-05 | Phase 6 complete. All inputs working. |
 | 1.6 | 2026-02-05 | Phase 7 broken into sub-phases 7A-7E. |
 | 1.7 | 2026-02-06 | 7A+7B complete. Mock mode added. |
-| 1.8 | 2026-02-07 | Phase 7 marked complete (but code not fully committed — context loss issue). |
-| 1.9 | 2026-02-07 | Phase 7 rebuilt and validated on hardware. Phase 8 planned as A/B/C sub-phases. Added context loss prevention notes to workflow. |
+| 1.8 | 2026-02-07 | Phase 7 complete. All screens working. GitHub workflow established. |
+| 1.9 | 2026-02-07 | Phase 7 rebuilt after context loss. Phase 8 planned as A/B/C. Git workflow lessons added. |
+| 2.0 | 2026-02-08 | Phase 8A complete. Phase 8B design complete. Separated operational knowledge into SOP.md. Added UNIFIED-CONTROL-SPEC.md and visual mockup. |
 
----
 
-## HANDOFF NOTES FOR NEXT SESSION
-
-**Where we stopped:** Phase 7 fully rebuilt and validated on hardware. PDP updated to v1.9. Ready for Phase 8A.
-
-**Current working state:**
-- All screens functional: device list, control, effect browser, palette browser, color picker
-- All gestures wired: swipe up (power), down (back), left (palette), right (color), encoder press (effects)
-- Identify device via long press (encoder or touch)
-
-**Next session starts with Phase 8A:**
-1. Cache effect/palette counts (kill browser entry lag)
-2. NVS persistence (last device, brightness)
-3. Smart boot sequence
-4. Error handling
-5. Rescan from UI
-
-**Then Phase 8B:** Unified control screen — Kaizen designs the layout, Claude implements.
-
-**Then Phase 8C:** Device groups and presets for batch art installation control.

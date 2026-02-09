@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WLED Unified Control v6</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&display=swap');
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0a0a0f; color:#e0e0e0; font-family:'JetBrains Mono',monospace; min-height:100vh; padding:20px; overflow-x:hidden; }
+  h1 { font-weight:300; font-size:1.3rem; color:#ff6b2b; letter-spacing:0.15em; text-transform:uppercase; text-align:center; margin-bottom:4px; }
+  .subtitle { color:#555; font-size:0.7rem; letter-spacing:0.1em; text-align:center; margin-bottom:24px; }
+
+  .view-tabs { display:flex; justify-content:center; gap:3px; margin-bottom:24px; flex-wrap:wrap; }
+  .view-tab { padding:5px 10px; background:#0f0f16; border:1px solid #222; color:#666; font-family:'JetBrains Mono',monospace; font-size:0.6rem; cursor:pointer; border-radius:4px; transition:all 0.2s; }
+  .view-tab:hover { border-color:#444; color:#aaa; }
+  .view-tab.active { border-color:#ff6b2b; color:#ff6b2b; background:rgba(255,107,43,0.06); }
+  .view-tab.future { border-style:dashed; opacity:0.5; }
+
+  .main-grid { display:flex; gap:44px; justify-content:center; align-items:flex-start; flex-wrap:wrap; }
+  .display-unit { display:flex; flex-direction:column; align-items:center; gap:10px; }
+  .display-label { font-size:0.58rem; color:#444; letter-spacing:0.1em; text-transform:uppercase; max-width:520px; text-align:center; line-height:1.5; }
+
+  /* DISPLAY */
+  .display-container { position:relative; width:520px; height:520px; flex-shrink:0; }
+  .display-bezel { position:absolute; inset:0; border-radius:50%; background:#1a1a22; box-shadow:0 0 0 4px #2a2a35,0 0 0 8px #111118,0 10px 40px rgba(0,0,0,0.6),inset 0 0 50px rgba(0,0,0,0.3); }
+  .display-screen { position:absolute; inset:16px; border-radius:50%; background:#000; overflow:hidden; }
+  .screen-view { position:absolute; inset:0; border-radius:50%; display:none; }
+  .screen-view.active { display:block; }
+
+  /* Overlay base — TIGHT padding for scrollable content */
+  .ov { position:absolute; inset:0; border-radius:50%; z-index:5; }
+  .ov-bg { position:absolute; inset:0; border-radius:50%; background:rgba(0,0,0,0.94); }
+  .ov-c {
+    position:absolute; inset:0; border-radius:50%;
+    display:flex; flex-direction:column; align-items:center;
+    z-index:6; padding:42px 20px 36px;
+    overflow:hidden;
+  }
+  .ov-title { font-size:16px; color:#ff6b2b; letter-spacing:0.14em; text-transform:uppercase; margin-bottom:2px; flex-shrink:0; }
+  .ov-sub { font-size:10px; color:#555; margin-bottom:8px; flex-shrink:0; text-align:center; }
+  .ov-hint { position:absolute; top:26px; font-size:10px; color:#333; }
+  .ov-hint-bot { position:absolute; bottom:26px; font-size:10px; color:#333; }
+  .ov-nav { position:absolute; bottom:30px; display:flex; gap:24px; font-size:12px; }
+  .ov-nav span { color:#666; }
+
+  /* Scrollable content wrapper — fills available width */
+  .scroll-area {
+    flex-grow:1;
+    width:100%;
+    max-width:380px;
+    overflow:hidden;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+  }
+
+  /* ============================================ */
+  /* VIEW 0: MAIN CONTROL (unchanged from v5)     */
+  /* ============================================ */
+  .bri-arc { position:absolute; inset:0; border-radius:50%; }
+  .bri-arc svg { width:100%; height:100%; }
+  .mc { position:absolute; inset:0; border-radius:50%; display:flex; flex-direction:column; align-items:center; z-index:2; padding:30px 36px; }
+
+  .dev-hdr { display:flex; align-items:center; gap:5px; margin-top:10px; }
+  .dev-hdr-name { font-size:14px; color:#ff6b2b; letter-spacing:0.1em; text-transform:uppercase; }
+  .dev-hdr-arr { font-size:10px; color:#ff6b2b; opacity:0.5; }
+  .dev-hdr-cnt { font-size:12px; color:#555; }
+
+  .top-row { display:flex; justify-content:space-between; width:100%; margin-top:12px; padding:0 6px; align-items:flex-start; }
+  .preset-q { display:flex; flex-direction:column; align-items:center; gap:2px; }
+  .preset-q-label { font-size:9px; color:#555; letter-spacing:0.08em; text-transform:uppercase; }
+  .preset-q-box { padding:5px 12px; border:1.5px solid #2a2a35; border-radius:5px; font-size:14px; color:#00cc55; background:rgba(0,204,85,0.04); min-width:56px; text-align:center; }
+  .preset-q-name { font-size:9px; color:#555; }
+  .bri-pwr { display:flex; flex-direction:column; align-items:flex-end; gap:5px; }
+  .bri-val { font-size:20px; color:#ffaa44; font-weight:600; }
+  .bri-ico { font-size:14px; opacity:0.6; }
+  .pwr { width:20px; height:20px; border-radius:50%; background:rgba(0,255,100,0.12); border:2px solid #00cc55; box-shadow:0 0 10px rgba(0,204,85,0.25); display:flex; align-items:center; justify-content:center; }
+  .pwr-dot { width:8px; height:8px; border-radius:50%; background:#00ff66; box-shadow:0 0 5px #00ff66; }
+
+  .fx-hero { text-align:center; margin-top:12px; }
+  .fx-cat-lbl { font-size:13px; color:#666; letter-spacing:0.12em; text-transform:uppercase; margin-bottom:2px; }
+  .fx-name-lbl { font-size:28px; font-weight:700; color:#fff; line-height:1.1; text-shadow:0 0 24px rgba(255,107,43,0.25); }
+
+  .si-row { display:flex; gap:20px; margin-top:14px; width:100%; justify-content:center; }
+  .si-bar { display:flex; flex-direction:column; align-items:center; gap:3px; }
+  .si-lbl { font-size:10px; color:#555; letter-spacing:0.08em; text-transform:uppercase; }
+  .si-track { width:110px; height:10px; background:#111118; border-radius:5px; overflow:hidden; }
+  .si-fill { height:100%; border-radius:5px; }
+  .si-fill.spd { background:linear-gradient(90deg,#1a4477,#44aaff); width:50%; }
+  .si-fill.int { background:linear-gradient(90deg,#773311,#ff6644); width:78%; }
+  .si-val { font-size:11px; color:#777; }
+
+  .cpz { margin-top:12px; display:flex; flex-direction:column; align-items:center; gap:8px; width:100%; }
+  .color-row { display:flex; align-items:center; gap:12px; }
+  .color-trio { display:flex; gap:12px; align-items:center; }
+  .cw { display:flex; flex-direction:column; align-items:center; gap:2px; }
+  .csw { width:32px; height:32px; border-radius:50%; border:2px solid rgba(255,255,255,0.08); transition:all 0.2s; }
+  .csw.act { border-color:rgba(255,255,255,0.5); box-shadow:0 0 14px rgba(255,255,255,0.15); transform:scale(1.1); }
+  .csw.dim { opacity:0.3; }
+  .csw.c1 { background:#ff6b2b; }
+  .csw.c2 { background:#003388; }
+  .csw.c3 { background:#220044; }
+  .cl { font-size:8px; color:#444; letter-spacing:0.06em; text-transform:uppercase; }
+  .cl.al { color:#aaa; }
+  .stag { font-size:9px; padding:3px 8px; border-radius:3px; letter-spacing:0.06em; text-transform:uppercase; font-weight:600; }
+  .stag.con { background:rgba(255,107,43,0.12); color:#ff8844; }
+  .stag.pon { background:rgba(170,102,255,0.12); color:#aa66ff; }
+  .stag.off { opacity:0.3; }
+  .pal-row { display:flex; align-items:center; gap:12px; }
+  .psw { display:flex; flex-direction:column; align-items:center; gap:2px; }
+  .pstrip { width:130px; height:10px; border-radius:5px; }
+  .pstrip.dim { opacity:0.3; }
+  .pstrip.lava { background:linear-gradient(90deg,#000,#f00,#f80,#ff0,#fff); }
+  .pnm { font-size:10px; color:#666; }
+  .mc-nav-b { position:absolute; bottom:30px; font-size:11px; color:#252530; }
+  .mc-nav-l { position:absolute; bottom:66px; left:30px; font-size:10px; color:#1e1e28; writing-mode:vertical-rl; }
+
+  /* ============================================ */
+  /* VIEW 1: DEVICES — wide, scrollable           */
+  /* ============================================ */
+  .di {
+    display:flex; align-items:center; gap:10px;
+    padding:8px 8px; border-radius:5px; margin-bottom:3px;
+    min-height:38px; width:100%;
+  }
+  .di.sel { background:rgba(255,107,43,0.07); }
+  .di-cb {
+    width:24px; height:24px; border-radius:4px;
+    border:2px solid #444; display:flex; align-items:center; justify-content:center;
+    flex-shrink:0; font-size:14px;
+  }
+  .di-cb.chk { border-color:#ff6b2b; background:rgba(255,107,43,0.15); color:#ff6b2b; }
+  .di-cb.chk::after { content:'✓'; }
+  .di-name { font-size:13px; color:#ccc; flex-grow:1; }
+  .di.sel .di-name { color:#ff6b2b; }
+  .di-ip { font-size:10px; color:#444; }
+
+  .dev-btns { display:flex; gap:10px; margin-top:8px; flex-shrink:0; }
+  .dev-btn { font-size:12px; color:#555; padding:7px 14px; border:1.5px solid #2a2a35; border-radius:5px; }
+  .dev-btn.pri { border-color:#ff6b2b; color:#ff6b2b; }
+
+  /* ============================================ */
+  /* VIEW 2: GROUPS — big rows, inline count      */
+  /* ============================================ */
+  .gi {
+    display:flex; align-items:center; gap:12px;
+    padding:14px 12px; border-radius:6px; margin-bottom:5px;
+    width:100%; min-height:52px;
+  }
+  .gi:hover { background:rgba(170,102,255,0.06); }
+  .gi-icon { font-size:20px; width:24px; text-align:center; flex-shrink:0; }
+  .gi-name { font-size:16px; color:#ccc; flex-grow:1; }
+  .gi-cnt { font-size:13px; color:#555; flex-shrink:0; }
+  .gi.act .gi-name { color:#aa66ff; }
+
+  /* ============================================ */
+  /* VIEW 3: MANAGE — wide rows                   */
+  /* ============================================ */
+  .gmi {
+    display:flex; align-items:center; justify-content:space-between;
+    padding:12px 10px; border-radius:6px; margin-bottom:5px;
+    min-height:48px; width:100%;
+  }
+  .gm-name { font-size:15px; color:#ccc; }
+  .gm-acts { display:flex; gap:14px; }
+  .gm-btn { font-size:14px; cursor:pointer; padding:2px 6px; }
+  .gm-btn.ed { color:#44aaff; }
+  .gm-btn.dl { color:#ff4444; }
+  .gm-new { margin-top:12px; font-size:14px; color:#00cc55; padding:10px 22px; border:1.5px solid rgba(0,204,85,0.3); border-radius:5px; flex-shrink:0; }
+
+  /* ============================================ */
+  /* VIEW 4: EFFECT DRAWER — wide                 */
+  /* ============================================ */
+  .fxd { width:100%; max-width:360px; overflow:hidden; }
+  .fxs { margin-bottom:12px; }
+  .fxs-t { font-size:11px; color:#555; letter-spacing:0.1em; text-transform:uppercase; margin-bottom:5px; padding-bottom:3px; border-bottom:1px solid #1a1a22; }
+
+  .fxsr {
+    display:flex; align-items:center; gap:8px;
+    padding:9px 10px; border:1.5px solid #1a1a22; border-radius:6px; margin-bottom:4px;
+    min-height:38px;
+  }
+  .fxsr-l { font-size:12px; color:#555; width:58px; }
+  .fxsr-v { font-size:14px; color:#fff; flex-grow:1; }
+  .fxsr-a { font-size:12px; color:#444; }
+
+  .fxpr { display:flex; align-items:center; gap:8px; margin-bottom:7px; }
+  .fxpr-l { font-size:12px; color:#888; width:60px; text-align:right; }
+  .fxpr-t { flex-grow:1; height:12px; background:#111118; border-radius:6px; overflow:hidden; }
+  .fxpr-f { height:100%; border-radius:6px; }
+  .fxpr-f.sp { background:linear-gradient(90deg,#1a4477,#44aaff); width:50%; }
+  .fxpr-f.in { background:linear-gradient(90deg,#773311,#ff6644); width:78%; }
+  .fxpr-v { font-size:13px; color:#888; width:34px; flex-shrink:0; }
+
+  .fxtogs { display:flex; gap:20px; margin-top:5px; }
+  .fxtog { display:flex; align-items:center; gap:7px; }
+  .fxt-box { width:20px; height:20px; border-radius:3px; border:1.5px solid #333; display:flex; align-items:center; justify-content:center; font-size:12px; color:transparent; }
+  .fxt-box.on { border-color:#44aaff; color:#44aaff; background:rgba(68,170,255,0.1); }
+  .fxt-box.on::after { content:'✓'; }
+  .fxt-lbl { font-size:12px; color:#777; }
+
+  .fxtr { display:flex; align-items:center; gap:8px; margin-top:7px; }
+  .fxtr-t { flex-grow:1; max-width:140px; height:10px; background:#111118; border-radius:5px; overflow:hidden; }
+  .fxtr-f { height:100%; border-radius:5px; background:linear-gradient(90deg,#222,#666); width:28%; }
+  .fxtr-v { font-size:12px; color:#888; }
+
+  .fxcr { display:flex; gap:10px; align-items:center; margin-bottom:6px; min-height:28px; }
+  .fxcsw { width:24px; height:24px; border-radius:50%; border:1.5px solid rgba(255,255,255,0.1); flex-shrink:0; }
+  .fxcsw.p { background:#ff6b2b; }
+  .fxcsw.s { background:#003388; }
+  .fxcsw.t { background:#220044; }
+  .fxc-l { font-size:12px; color:#777; flex-grow:1; }
+  .fxc-e { font-size:10px; color:#44aaff; }
+
+  /* ============================================ */
+  /* VIEW 5: CATEGORIES — wide, big rows          */
+  /* ============================================ */
+  .ci {
+    display:flex; align-items:center; gap:10px;
+    padding:10px 8px; border-radius:5px; margin-bottom:2px;
+    min-height:42px; width:100%;
+  }
+  .ci:hover { background:rgba(255,107,43,0.05); }
+  .ci.sel { background:rgba(255,107,43,0.1); }
+  .ci-icon { font-size:16px; width:22px; text-align:center; flex-shrink:0; }
+  .ci-name { font-size:14px; color:#ccc; flex-grow:1; }
+  .ci-num { font-size:11px; color:#555; }
+  .ci.sel .ci-name { color:#ff6b2b; }
+
+  /* ============================================ */
+  /* VIEW 6: EFFECTS LIST — wide                  */
+  /* ============================================ */
+  .ei-hdr {
+    font-size:12px; color:#ff6b2b; letter-spacing:0.08em; text-transform:uppercase;
+    margin-bottom:8px; padding-bottom:5px; border-bottom:1px solid #1a1a22;
+    display:flex; gap:10px; align-items:center; width:100%;
+  }
+  .ei-back { font-size:16px; color:#555; }
+  .ei {
+    padding:9px 10px; border-radius:5px; margin-bottom:2px;
+    min-height:40px; display:flex; align-items:center; width:100%;
+  }
+  .ei:hover { background:rgba(255,107,43,0.05); }
+  .ei.cur { background:rgba(255,107,43,0.1); }
+  .ei-id { font-size:10px; color:#444; margin-right:10px; min-width:22px; }
+  .ei-name { font-size:15px; color:#ccc; }
+  .ei.cur .ei-name { color:#ff6b2b; font-weight:600; }
+
+  /* ============================================ */
+  /* VIEW 7: SAVE PRESET                          */
+  /* ============================================ */
+  .pre-sum { width:100%; max-width:300px; padding:12px 16px; background:rgba(255,255,255,0.02); border-radius:7px; border:1px solid #1a1a22; margin-bottom:12px; }
+  .pre-r { display:flex; justify-content:space-between; margin-bottom:5px; }
+  .pre-k { font-size:10px; color:#555; text-transform:uppercase; }
+  .pre-v { font-size:12px; color:#aaa; }
+  .pre-nf { width:240px; padding:10px 14px; background:#0f0f16; border:1.5px solid #333; border-radius:6px; font-size:16px; color:#fff; text-align:center; font-family:'JetBrains Mono',monospace; margin-bottom:12px; }
+  .pre-btn { font-size:14px; color:#00cc55; padding:10px 28px; border:1.5px solid rgba(0,204,85,0.4); border-radius:6px; background:rgba(0,204,85,0.05); }
+
+  /* ============================================ */
+  /* VIEW 8: MIDI                                 */
+  /* ============================================ */
+  .midi-g { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; width:100%; max-width:320px; margin-top:6px; }
+  .midi-p { aspect-ratio:1; border-radius:7px; display:flex; flex-direction:column; align-items:center; justify-content:center; border:1.5px solid #222; background:#0c0c14; }
+  .midi-p.asgn { border-color:#333; background:linear-gradient(135deg,#0f1018,#141420); }
+  .midi-p.act-p { border-color:#ff6b2b; background:rgba(255,107,43,0.08); box-shadow:0 0 10px rgba(255,107,43,0.15); }
+  .midi-n { font-size:11px; color:#444; }
+  .midi-pn { font-size:9px; color:#888; margin-top:2px; text-align:center; line-height:1.2; }
+  .midi-p.act-p .midi-n { color:#ff6b2b; }
+  .midi-p.act-p .midi-pn { color:#ffaa44; }
+  .midi-pi { font-size:11px; color:#444; margin-top:8px; flex-shrink:0; }
+  .midi-d { display:inline-block; width:7px; height:7px; border-radius:50%; background:#333; margin:0 3px; }
+  .midi-d.a { background:#ff6b2b; }
+
+  /* ============================================ */
+  /* LEGEND                                       */
+  /* ============================================ */
+  .legend { max-width:380px; flex-shrink:0; }
+  .legend h2 { font-size:0.8rem; color:#ff6b2b; letter-spacing:0.1em; text-transform:uppercase; margin-bottom:14px; font-weight:400; }
+  .ls { margin-bottom:16px; }
+  .ls h3 { font-size:0.65rem; color:#555; letter-spacing:0.1em; text-transform:uppercase; margin-bottom:5px; font-weight:400; padding-bottom:3px; border-bottom:1px solid #111118; }
+  .li { display:flex; gap:10px; margin-bottom:4px; align-items:baseline; }
+  .li-in { font-size:0.62rem; color:#ffaa44; white-space:nowrap; min-width:112px; font-weight:600; }
+  .li-act { font-size:0.62rem; color:#777; }
+  .ln { font-size:0.58rem; color:#444; font-style:italic; line-height:1.5; padding:5px 7px; background:rgba(255,107,43,0.025); border-left:2px solid #1a1a22; margin-top:4px; }
+  .tag { display:inline-block; padding:1px 5px; border-radius:3px; font-size:0.52rem; letter-spacing:0.05em; text-transform:uppercase; font-weight:600; }
+  .tag.o { background:rgba(255,107,43,0.1); color:#ff6b2b; }
+  .tag.b { background:rgba(68,170,255,0.1); color:#44aaff; }
+  .tag.dim { background:rgba(255,255,255,0.03); color:#444; border:1px dashed #333; }
+
+  /* FLOW */
+  .flow-section { margin-top:36px; width:100%; max-width:1000px; margin-left:auto; margin-right:auto; }
+  .flow-section h2 { font-size:0.78rem; color:#ff6b2b; letter-spacing:0.1em; text-transform:uppercase; margin-bottom:12px; font-weight:400; text-align:center; }
+  .flow-map { display:flex; flex-direction:column; align-items:center; gap:5px; padding:14px; background:rgba(255,255,255,0.01); border:1px solid #111118; border-radius:8px; }
+  .flow-row { display:flex; align-items:center; gap:5px; flex-wrap:wrap; justify-content:center; }
+  .fb { padding:6px 10px; border:1px solid #1a1a22; border-radius:4px; font-size:0.58rem; color:#777; text-align:center; background:#0c0c12; min-width:80px; }
+  .fb.hero { border-color:#ff6b2b; color:#fff; background:rgba(255,107,43,0.05); }
+  .fb.ov-f { border-style:dashed; color:#999; }
+  .fb.fut { border-style:dotted; opacity:0.5; }
+  .fa { color:#333; font-size:0.9rem; }
+  .fv { color:#333; font-size:0.7rem; }
+  .fl { font-size:0.5rem; color:#444; font-style:italic; margin:0 3px; }
+</style>
+</head>
+<body>
+
+<h1>WLED Unified Control v6</h1>
+<p class="subtitle">Wider overlay content · bigger group targets · inline device counts</p>
+
+<div class="view-tabs">
+  <button class="view-tab active" onclick="sv(0)">① Main</button>
+  <button class="view-tab" onclick="sv(1)">② Devices</button>
+  <button class="view-tab" onclick="sv(2)">③ Groups</button>
+  <button class="view-tab" onclick="sv(3)">④ Manage</button>
+  <button class="view-tab" onclick="sv(4)">⑤ FX Drawer</button>
+  <button class="view-tab" onclick="sv(5)">⑥ Categories</button>
+  <button class="view-tab" onclick="sv(6)">⑦ FX List</button>
+  <button class="view-tab" onclick="sv(7)">⑧ Save Preset</button>
+  <button class="view-tab future" onclick="sv(8)">⑨ MIDI Grid</button>
+</div>
+
+<div class="main-grid">
+<div class="display-unit">
+<div class="display-container">
+<div class="display-bezel"></div>
+<div class="display-screen">
+
+<!-- ====== VIEW 0: MAIN CONTROL ====== -->
+<div class="screen-view active" id="v-0">
+  <div class="bri-arc">
+    <svg viewBox="0 0 488 488">
+      <circle cx="244" cy="244" r="230" fill="none" stroke="#0e0e14" stroke-width="16" stroke-dasharray="1090 356" stroke-dashoffset="-178" stroke-linecap="round"/>
+      <circle cx="244" cy="244" r="230" fill="none" stroke="url(#bg0)" stroke-width="16" stroke-dasharray="763 683" stroke-dashoffset="-178" stroke-linecap="round"/>
+      <defs><linearGradient id="bg0" x1="0%" y1="100%" x2="100%" y2="0%"><stop offset="0%" stop-color="#332200"/><stop offset="60%" stop-color="#ff8800"/><stop offset="100%" stop-color="#ffcc44"/></linearGradient></defs>
+    </svg>
+  </div>
+  <div class="mc">
+    <div class="dev-hdr">
+      <span class="dev-hdr-name">wled-37cac0</span>
+      <span class="dev-hdr-arr">▾</span>
+      <span class="dev-hdr-cnt">(+2)</span>
+    </div>
+    <div class="top-row">
+      <div class="preset-q">
+        <div class="preset-q-label">Preset</div>
+        <div class="preset-q-box">P03</div>
+        <div class="preset-q-name">Sunset Fire</div>
+      </div>
+      <div class="bri-pwr">
+        <div class="bri-val"><span class="bri-ico">☀ </span>178</div>
+        <div class="pwr"><div class="pwr-dot"></div></div>
+      </div>
+    </div>
+    <div class="fx-hero">
+      <div class="fx-cat-lbl">🔥 Fire</div>
+      <div class="fx-name-lbl">Fire 2012</div>
+    </div>
+    <div class="si-row">
+      <div class="si-bar"><div class="si-lbl">Speed</div><div class="si-track"><div class="si-fill spd"></div></div><div class="si-val">128</div></div>
+      <div class="si-bar"><div class="si-lbl">Intensity</div><div class="si-track"><div class="si-fill int"></div></div><div class="si-val">200</div></div>
+    </div>
+    <div class="cpz">
+      <div class="color-row">
+        <div class="color-trio">
+          <div class="cw"><div class="csw c1 act" style="box-shadow:0 0 14px rgba(255,107,43,0.5);"></div><div class="cl al">1st</div></div>
+          <div class="cw"><div class="csw c2 act" style="box-shadow:0 0 12px rgba(0,51,136,0.5);"></div><div class="cl al">2nd</div></div>
+          <div class="cw"><div class="csw c3 dim"></div><div class="cl">3rd</div></div>
+        </div>
+        <div class="stag con">color ✓</div>
+      </div>
+      <div class="pal-row">
+        <div class="psw"><div class="pstrip lava dim"></div><div class="pnm">Lava</div></div>
+        <div class="stag pon off">palette</div>
+      </div>
+    </div>
+    <div class="mc-nav-b">▲ effects · ▾ devices</div>
+    <div class="mc-nav-l">← midi</div>
+  </div>
+</div>
+
+<!-- ====== VIEW 1: DEVICES ====== -->
+<div class="screen-view" id="v-1">
+  <div class="ov"><div class="ov-bg"></div>
+    <div class="ov-c">
+      <div class="ov-hint">▲ close</div>
+      <div class="ov-title">Devices</div>
+      <div class="ov-sub">tap name = solo · ☐ = multi</div>
+      <div class="scroll-area">
+        <div class="di sel"><div class="di-cb chk"></div><span class="di-name">wled-37cac0</span><span class="di-ip">.96</span></div>
+        <div class="di"><div class="di-cb chk"></div><span class="di-name">wled-2c55b4</span><span class="di-ip">.94</span></div>
+        <div class="di"><div class="di-cb chk"></div><span class="di-name">wled-37cac0-2</span><span class="di-ip">.88</span></div>
+        <div class="di"><div class="di-cb"></div><span class="di-name">wled-37cac0-3</span><span class="di-ip">.87</span></div>
+        <div class="di"><div class="di-cb"></div><span class="di-name">wled-37cac0-4</span><span class="di-ip">.85</span></div>
+        <div class="di"><div class="di-cb"></div><span class="di-name">wled-37cac0-5</span><span class="di-ip">.84</span></div>
+        <div class="di"><div class="di-cb"></div><span class="di-name">wled-f7b158</span><span class="di-ip">.86</span></div>
+      </div>
+      <div class="dev-btns">
+        <div class="dev-btn">All</div>
+        <div class="dev-btn">Clear</div>
+        <div class="dev-btn pri">Apply (3)</div>
+      </div>
+      <div class="ov-nav"><span>← Groups</span><span style="color:#333">|</span><span>Manage →</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ====== VIEW 2: GROUPS — bigger, inline count ====== -->
+<div class="screen-view" id="v-2">
+  <div class="ov"><div class="ov-bg"></div>
+    <div class="ov-c">
+      <div class="ov-hint">▲ close</div>
+      <div class="ov-title" style="color:#aa66ff">Groups</div>
+      <div class="ov-sub">tap to load · UDP sync</div>
+      <div class="scroll-area">
+        <div class="gi act">
+          <span class="gi-icon">◈</span>
+          <span class="gi-name">North Wall (3)</span>
+        </div>
+        <div class="gi">
+          <span class="gi-icon">◈</span>
+          <span class="gi-name">South Entrance (2)</span>
+        </div>
+        <div class="gi">
+          <span class="gi-icon">◈</span>
+          <span class="gi-name">Full Installation (7)</span>
+        </div>
+        <div class="gi">
+          <span class="gi-icon" style="color:#555">◇</span>
+          <span class="gi-name" style="color:#666;font-style:italic">All Devices (UDP)</span>
+        </div>
+      </div>
+      <div class="ov-nav"><span>Devices →</span><span style="color:#333">|</span><span>Manage →→</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ====== VIEW 3: MANAGE — wide ====== -->
+<div class="screen-view" id="v-3">
+  <div class="ov"><div class="ov-bg"></div>
+    <div class="ov-c">
+      <div class="ov-hint">▲ close</div>
+      <div class="ov-title" style="color:#44aaff">Manage Groups</div>
+      <div class="ov-sub">edit · delete</div>
+      <div class="scroll-area">
+        <div class="gmi"><span class="gm-name">North Wall (3)</span><div class="gm-acts"><span class="gm-btn ed">edit</span><span class="gm-btn dl">×</span></div></div>
+        <div class="gmi"><span class="gm-name">South Entrance (2)</span><div class="gm-acts"><span class="gm-btn ed">edit</span><span class="gm-btn dl">×</span></div></div>
+        <div class="gmi"><span class="gm-name">Full Installation (7)</span><div class="gm-acts"><span class="gm-btn ed">edit</span><span class="gm-btn dl">×</span></div></div>
+      </div>
+      <div class="gm-new">+ New Group</div>
+      <div class="ov-nav"><span>←← Groups</span><span style="color:#333">|</span><span>← Devices</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ====== VIEW 4: EFFECT DRAWER — wide ====== -->
+<div class="screen-view" id="v-4">
+  <div class="ov"><div class="ov-bg"></div>
+    <div class="ov-c" style="padding-top:38px; justify-content:flex-start;">
+      <div class="ov-hint-bot">▼ close</div>
+      <div class="ov-title">Effect Controls</div>
+      <div class="ov-sub">tap value → encoder adjusts</div>
+      <div class="fxd">
+        <div class="fxs">
+          <div class="fxs-t">Current</div>
+          <div class="fxsr"><span class="fxsr-l">Effect</span><span class="fxsr-v">Fire 2012</span><span class="fxsr-a">▸</span></div>
+          <div class="fxsr"><span class="fxsr-l">Palette</span><span class="fxsr-v">Lava</span><span class="fxsr-a">▸</span></div>
+        </div>
+        <div class="fxs">
+          <div class="fxs-t">Parameters</div>
+          <div class="fxpr"><span class="fxpr-l">Speed</span><div class="fxpr-t"><div class="fxpr-f sp"></div></div><span class="fxpr-v">128</span></div>
+          <div class="fxpr"><span class="fxpr-l">Intensity</span><div class="fxpr-t"><div class="fxpr-f in"></div></div><span class="fxpr-v">200</span></div>
+        </div>
+        <div class="fxs">
+          <div class="fxs-t">Options</div>
+          <div class="fxtogs">
+            <div class="fxtog"><div class="fxt-box"></div><span class="fxt-lbl">Reverse</span></div>
+            <div class="fxtog"><div class="fxt-box on"></div><span class="fxt-lbl">Mirror</span></div>
+          </div>
+          <div class="fxtr"><span class="fxpr-l">Transition</span><div class="fxtr-t"><div class="fxtr-f"></div></div><span class="fxtr-v">700ms</span></div>
+        </div>
+        <div class="fxs">
+          <div class="fxs-t">Colors</div>
+          <div class="fxcr"><div class="fxcsw p"></div><span class="fxc-l">Primary</span><span class="fxc-e">tap → pick</span></div>
+          <div class="fxcr"><div class="fxcsw s"></div><span class="fxc-l">Secondary</span><span class="fxc-e">tap → pick</span></div>
+          <div class="fxcr"><div class="fxcsw t"></div><span class="fxc-l">Tertiary</span><span class="fxc-e">tap → pick</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ====== VIEW 5: CATEGORIES — wide ====== -->
+<div class="screen-view" id="v-5">
+  <div class="ov"><div class="ov-bg"></div>
+    <div class="ov-c">
+      <div class="ov-hint">▲ close</div>
+      <div class="ov-title">Categories</div>
+      <div class="ov-sub">encoder scroll · tap to enter</div>
+      <div class="scroll-area">
+        <div class="ci"><span class="ci-icon">■</span><span class="ci-name">Solid (1)</span></div>
+        <div class="ci"><span class="ci-icon">⚡</span><span class="ci-name">Blink / Strobe (7)</span></div>
+        <div class="ci"><span class="ci-icon">→</span><span class="ci-name">Wipe / Sweep (9)</span></div>
+        <div class="ci"><span class="ci-icon">►►</span><span class="ci-name">Chase (12)</span></div>
+        <div class="ci"><span class="ci-icon">🌈</span><span class="ci-name">Rainbow (8)</span></div>
+        <div class="ci sel"><span class="ci-icon">🔥</span><span class="ci-name">Fire / Flicker (2)</span></div>
+        <div class="ci"><span class="ci-icon">✦</span><span class="ci-name">Twinkle (7)</span></div>
+        <div class="ci"><span class="ci-icon">~</span><span class="ci-name">Wave / Run (9)</span></div>
+        <div class="ci"><span class="ci-icon">≋</span><span class="ci-name">Noise (6)</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ====== VIEW 6: EFFECTS LIST ====== -->
+<div class="screen-view" id="v-6">
+  <div class="ov"><div class="ov-bg"></div>
+    <div class="ov-c">
+      <div class="ov-hint">▲ close</div>
+      <div class="ov-title">🔥 Fire / Flicker</div>
+      <div class="ov-sub">encoder scroll · press = apply</div>
+      <div class="scroll-area">
+        <div class="ei-hdr"><span class="ei-back">◂</span><span>Back to categories</span></div>
+        <div class="ei"><span class="ei-id">45</span><span class="ei-name">Fire Flicker</span></div>
+        <div class="ei cur"><span class="ei-id">66</span><span class="ei-name">Fire 2012</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ====== VIEW 7: SAVE PRESET ====== -->
+<div class="screen-view" id="v-7">
+  <div class="ov"><div class="ov-bg"></div>
+    <div class="ov-c">
+      <div class="ov-hint">long-press preset box</div>
+      <div class="ov-title" style="color:#00cc55">Save Preset</div>
+      <div class="ov-sub">snapshot → named recipe</div>
+      <div class="pre-sum">
+        <div class="pre-r"><span class="pre-k">Effect</span><span class="pre-v">Fire 2012</span></div>
+        <div class="pre-r"><span class="pre-k">Speed / Int</span><span class="pre-v">128 / 200</span></div>
+        <div class="pre-r"><span class="pre-k">Palette</span><span class="pre-v">Lava</span></div>
+        <div class="pre-r"><span class="pre-k">Primary</span><span class="pre-v" style="color:#ff6b2b">■ #FF6B2B</span></div>
+        <div class="pre-r"><span class="pre-k">Secondary</span><span class="pre-v" style="color:#3366aa">■ #003388</span></div>
+        <div class="pre-r"><span class="pre-k">Brightness</span><span class="pre-v">178</span></div>
+        <div class="pre-r"><span class="pre-k">Rev / Mirror</span><span class="pre-v">off / on</span></div>
+      </div>
+      <div class="pre-nf">Sunset Fire</div>
+      <div class="pre-btn">✓ Save Preset</div>
+    </div>
+  </div>
+</div>
+
+<!-- ====== VIEW 8: MIDI GRID ====== -->
+<div class="screen-view" id="v-8">
+  <div class="ov"><div class="ov-bg"></div>
+    <div class="ov-c">
+      <div class="ov-hint" style="color:#555">FUTURE — Phase 8C/9</div>
+      <div class="ov-title" style="font-size:14px;">MIDI Grid</div>
+      <div class="ov-sub">tap = fire · long = reassign · swipe = pages</div>
+      <div class="midi-g">
+        <div class="midi-p act-p"><div class="midi-n">P01</div><div class="midi-pn">Sunset Fire</div></div>
+        <div class="midi-p asgn"><div class="midi-n">P02</div><div class="midi-pn">Ocean Calm</div></div>
+        <div class="midi-p asgn"><div class="midi-n">P03</div><div class="midi-pn">Rave Mode</div></div>
+        <div class="midi-p asgn"><div class="midi-n">P04</div><div class="midi-pn">Night Glow</div></div>
+        <div class="midi-p asgn"><div class="midi-n">P05</div><div class="midi-pn">Rainbow</div></div>
+        <div class="midi-p asgn"><div class="midi-n">P06</div><div class="midi-pn">Twinkle</div></div>
+        <div class="midi-p"><div class="midi-n">P07</div><div class="midi-pn" style="color:#333">empty</div></div>
+        <div class="midi-p"><div class="midi-n">P08</div><div class="midi-pn" style="color:#333">empty</div></div>
+        <div class="midi-p asgn"><div class="midi-n">P09</div><div class="midi-pn">All Off</div></div>
+        <div class="midi-p asgn"><div class="midi-n">P10</div><div class="midi-pn">Full White</div></div>
+        <div class="midi-p"><div class="midi-n">P11</div><div class="midi-pn" style="color:#333">empty</div></div>
+        <div class="midi-p"><div class="midi-n">P12</div><div class="midi-pn" style="color:#333">empty</div></div>
+      </div>
+      <div class="midi-pi"><span class="midi-d a"></span><span class="midi-d"></span><span class="midi-d"></span><span class="midi-d"></span>&ensp;page 1/4</div>
+      <div class="ov-nav"><span>swipe ↑↓← = pages</span><span style="color:#333">|</span><span>→ main</span></div>
+    </div>
+  </div>
+</div>
+
+</div></div></div>
+
+<!-- LEGEND -->
+<div class="legend">
+  <h2>Interaction Map</h2>
+  <div class="ls">
+    <h3>Main Control <span class="tag o">①</span></h3>
+    <div class="li"><span class="li-in">Encoder rotate</span><span class="li-act">Brightness (default) or focused param</span></div>
+    <div class="li"><span class="li-in">Encoder press</span><span class="li-act">Exit focus / confirm</span></div>
+    <div class="li"><span class="li-in">Encoder long</span><span class="li-act">Identify device (pulse)</span></div>
+    <div class="li"><span class="li-in">Tap effect</span><span class="li-act">→ Category browser ⑥</span></div>
+    <div class="li"><span class="li-in">Tap color swatch</span><span class="li-act">→ HSV picker for that color</span></div>
+    <div class="li"><span class="li-in">Tap palette</span><span class="li-act">→ Palette browser</span></div>
+    <div class="li"><span class="li-in">Tap power</span><span class="li-act">Toggle on/off</span></div>
+    <div class="li"><span class="li-in">Tap speed/intens</span><span class="li-act">Focus → encoder adjusts</span></div>
+    <div class="li"><span class="li-in">Tap preset box</span><span class="li-act">Focus → encoder scrolls presets</span></div>
+    <div class="li"><span class="li-in">Long-press preset</span><span class="li-act">→ Save Preset ⑧</span></div>
+    <div class="li"><span class="li-in">Swipe ↓</span><span class="li-act">Device pull-down ②</span></div>
+    <div class="li"><span class="li-in">Swipe ↑</span><span class="li-act">Effect drawer ⑤</span></div>
+    <div class="li"><span class="li-in">Swipe ← (R→L)</span><span class="li-act">MIDI grid ⑨ (future)</span></div>
+  </div>
+  <div class="ls">
+    <h3>Devices / Groups <span class="tag o">②③④</span></h3>
+    <div class="li"><span class="li-in">Tap name</span><span class="li-act">Solo select</span></div>
+    <div class="li"><span class="li-in">Tap ☐</span><span class="li-act">Multi-select toggle</span></div>
+    <div class="li"><span class="li-in">Tap group</span><span class="li-act">Load → auto-check → close</span></div>
+    <div class="li"><span class="li-in">Swipe ←/→</span><span class="li-act">Groups ↔ Devices ↔ Manage</span></div>
+    <div class="ln">Groups show "Name (N)" format — 16px text, 52px row height. Scrollable when list exceeds visible area.</div>
+  </div>
+  <div class="ls">
+    <h3>Effect Drawer <span class="tag o">⑤</span></h3>
+    <div class="li"><span class="li-in">Tap effect/palette</span><span class="li-act">→ respective browser</span></div>
+    <div class="li"><span class="li-in">Tap param bar</span><span class="li-act">Focus → encoder adjusts</span></div>
+    <div class="li"><span class="li-in">Tap color swatch</span><span class="li-act">→ HSV picker</span></div>
+    <div class="li"><span class="li-in">Tap toggles</span><span class="li-act">Reverse / Mirror</span></div>
+    <div class="ln">Param bars now stretch full width. Bigger touch targets on all interactive elements.</div>
+  </div>
+  <div class="ls">
+    <h3>Color Source <span class="tag b">design</span></h3>
+    <div class="ln">Active source glows + scaled up, inactive dims to 30%. Start with both visible, add lookup table incrementally.</div>
+  </div>
+  <div class="ls">
+    <h3>MIDI Grid <span class="tag dim">future</span></h3>
+    <div class="li"><span class="li-in">Tap pad</span><span class="li-act">Fire preset</span></div>
+    <div class="li"><span class="li-in">Long-press</span><span class="li-act">Reassign slot</span></div>
+    <div class="li"><span class="li-in">Swipe ↑↓←</span><span class="li-act">Pages (4×3 × 4 = 48 slots)</span></div>
+  </div>
+</div>
+</div>
+
+<!-- FLOW MAP -->
+<div class="flow-section">
+  <h2>Screen Architecture</h2>
+  <div class="flow-map">
+    <div class="flow-row"><div class="fb">Boot</div><span class="fa">→</span><div class="fb">Smart Boot</div><span class="fa">→</span><div class="fb hero">① Main Control</div><span class="fa">⟵</span><div class="fb ov-f fut">⑨ MIDI Grid</div></div>
+    <div class="flow-row" style="margin-top:6px;"><span class="fv">↓ swipe ↓</span><span style="width:80px"></span><span class="fv">↑ swipe ↑</span></div>
+    <div class="flow-row"><div class="fb ov-f">③ Groups</div><span class="fa">↔</span><div class="fb ov-f">② Devices</div><span class="fa">↔</span><div class="fb ov-f">④ Manage</div><span style="width:24px"></span><div class="fb ov-f">⑤ FX Drawer</div></div>
+    <div class="flow-row" style="margin-top:6px;"><span class="fl">3-panel horizontal swipe</span><span style="width:40px"></span><span class="fv">↓</span></div>
+    <div class="flow-row"><span style="width:200px"></span><div class="fb ov-f">⑥ Categories</div><span class="fa">→</span><div class="fb ov-f">⑦ FX List</div></div>
+    <div class="flow-row" style="margin-top:6px;"><div class="fb ov-f">Color Picker</div><span class="fl">tap swatch</span><div class="fb ov-f">Palette Browser</div><span class="fl">tap palette</span><div class="fb ov-f" style="border-color:rgba(0,204,85,0.3)">⑧ Save Preset</div><span class="fl">long-press</span></div>
+  </div>
+</div>
+
+<script>
+const labels = [
+  '① Main Control — user will redesign layout separately',
+  '② Devices — wide content, scrollable, 24px checkboxes, 13px names',
+  '③ Groups — 16px "Name (N)" format, 52px rows, single-tap to load',
+  '④ Manage — 15px names with inline count, 48px rows, edit/delete',
+  '⑤ FX Drawer — full-width param bars, 24px color swatches, 20px toggles',
+  '⑥ Categories — 14px names with inline count, 42px rows, scrollable',
+  '⑦ FX List — 15px names, 40px rows, encoder + press to apply',
+  '⑧ Save Preset — state snapshot, name field, save button',
+  '⑨ MIDI Grid (FUTURE) — 4×3 pads, 4 pages = 48 slots'
+];
+function sv(n) {
+  document.querySelectorAll('.screen-view').forEach((v,i) => v.classList.toggle('active', i===n));
+  document.querySelectorAll('.view-tab').forEach((t,i) => t.classList.toggle('active', i===n));
+  document.getElementById('vLabel').textContent = labels[n];
+}
+</script>
+</body>
+</html>
