@@ -59,7 +59,9 @@ const char* wled_get_effect_name(int id) {
     if (id >= 0 && id < KNOWN_EFFECTS_COUNT) {
         return EFFECT_NAMES[id];
     }
-    return "Unknown";
+    static char buf[12];
+    snprintf(buf, sizeof(buf), "FX %d", id);
+    return buf;
 }
 
 // ===== COMMON PALETTE NAMES =====
@@ -121,7 +123,9 @@ const char* wled_get_palette_name(int id) {
     if (id >= 0 && id < KNOWN_PALETTES_COUNT) {
         return PALETTE_NAMES[id];
     }
-    return "Unknown";
+    static char buf[12];
+    snprintf(buf, sizeof(buf), "Pal %d", id);
+    return buf;
 }
 
 #ifdef MOCK_MODE

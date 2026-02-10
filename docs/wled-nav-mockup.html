@@ -1,0 +1,1105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WLED Controller — Navigation Prototype</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Space+Mono:wght@400;700&display=swap');
+
+  :root {
+    --orange: #ff6b2b;
+    --amber: #ffaa44;
+    --purple: #aa66ff;
+    --blue: #44aaff;
+    --green: #00cc55;
+    --red: #ff4444;
+    --bg: #06060b;
+    --panel: #0c0c14;
+    --border: #1a1a22;
+    --border-light: #2a2a35;
+    --text: #ccc;
+    --dim: #555;
+    --hint: #333;
+    --screen-bg: #000;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ===== TOP BAR ===== */
+  .top-bar {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+  }
+  .top-bar h1 {
+    font-size: 0.85rem; font-weight: 300; color: var(--orange);
+    letter-spacing: 0.15em; text-transform: uppercase;
+  }
+  .breadcrumb {
+    font-size: 0.65rem; color: var(--dim); letter-spacing: 0.08em;
+  }
+  .breadcrumb .current { color: var(--orange); }
+
+  /* ===== MAIN LAYOUT ===== */
+  .layout {
+    display: flex; gap: 40px; justify-content: center; align-items: flex-start;
+    padding: 30px 24px; flex-wrap: wrap;
+  }
+
+  /* ===== DISPLAY UNIT ===== */
+  .display-unit {
+    display: flex; flex-direction: column; align-items: center; gap: 16px;
+    flex-shrink: 0;
+  }
+
+  .display-container {
+    position: relative; width: 320px; height: 320px;
+  }
+  .display-bezel {
+    position: absolute; inset: 0; border-radius: 50%;
+    background: #1a1a22;
+    box-shadow:
+      0 0 0 3px #2a2a35,
+      0 0 0 6px #111118,
+      0 8px 30px rgba(0,0,0,0.6),
+      inset 0 0 40px rgba(0,0,0,0.3);
+  }
+  .display-screen {
+    position: absolute; inset: 12px; border-radius: 50%;
+    background: var(--screen-bg); overflow: hidden;
+  }
+
+  /* ===== SCREEN VIEWS ===== */
+  .screen-view {
+    position: absolute; inset: 0; border-radius: 50%;
+    display: none;
+    transition: opacity 0.15s ease;
+  }
+  .screen-view.active { display: flex; }
+  .screen-view .content {
+    position: absolute; inset: 0; border-radius: 50%;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 28px 16px 24px; overflow: hidden;
+  }
+
+  /* Screen title styles */
+  .scr-title {
+    font-size: 13px; letter-spacing: 0.14em; text-transform: uppercase;
+    margin-bottom: 2px; flex-shrink: 0;
+  }
+  .scr-sub {
+    font-size: 9px; color: var(--dim); margin-bottom: 6px;
+    flex-shrink: 0; text-align: center;
+  }
+  .scr-hint-top {
+    position: absolute; top: 14px; font-size: 9px; color: var(--hint);
+    letter-spacing: 0.06em;
+  }
+  .scr-hint-bot {
+    position: absolute; bottom: 14px; font-size: 9px; color: var(--hint);
+    letter-spacing: 0.06em;
+  }
+  .scr-hint-left {
+    position: absolute; left: 14px; top: 50%; transform: translateY(-50%) rotate(-90deg);
+    font-size: 9px; color: var(--hint); letter-spacing: 0.06em; white-space: nowrap;
+  }
+  .scr-hint-right {
+    position: absolute; right: 14px; top: 50%; transform: translateY(-50%) rotate(90deg);
+    font-size: 9px; color: var(--hint); letter-spacing: 0.06em; white-space: nowrap;
+  }
+
+  /* Scroll area inside screens */
+  .scroll-area {
+    flex-grow: 1; width: 100%; max-width: 240px;
+    overflow: hidden; display: flex; flex-direction: column;
+    align-items: center; gap: 2px;
+  }
+
+  /* ===== HOME PAGE ===== */
+  .home-bri-arc {
+    position: absolute; inset: 0; border-radius: 50%;
+  }
+  .home-bri-arc svg { width: 100%; height: 100%; }
+
+  .home-device {
+    font-size: 11px; color: var(--orange); letter-spacing: 0.1em;
+    text-transform: uppercase; margin-top: 4px;
+  }
+  .home-device-sub { font-size: 9px; color: var(--dim); }
+
+  .home-top-row {
+    display: flex; justify-content: space-between; width: 100%;
+    margin-top: 8px; padding: 0 8px; align-items: flex-start;
+  }
+  .home-preset-box {
+    display: flex; flex-direction: column; align-items: center; gap: 1px;
+  }
+  .home-preset-label { font-size: 8px; color: var(--dim); text-transform: uppercase; }
+  .home-preset-val {
+    padding: 3px 8px; border: 1px solid var(--border-light);
+    border-radius: 4px; font-size: 11px; color: var(--green);
+    background: rgba(0,204,85,0.04);
+  }
+  .home-preset-name { font-size: 8px; color: var(--dim); }
+
+  .home-bri-pwr { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+  .home-bri-val { font-size: 16px; color: var(--amber); font-weight: 600; }
+  .home-pwr {
+    width: 16px; height: 16px; border-radius: 50%;
+    background: rgba(0,255,100,0.12); border: 1.5px solid var(--green);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .home-pwr-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: #00ff66; box-shadow: 0 0 4px #00ff66;
+  }
+
+  .home-fx-hero { text-align: center; margin-top: 8px; }
+  .home-fx-cat { font-size: 10px; color: #666; text-transform: uppercase; letter-spacing: 0.1em; }
+  .home-fx-name {
+    font-size: 22px; font-weight: 700; color: #fff; line-height: 1.1;
+    text-shadow: 0 0 18px rgba(255,107,43,0.2);
+  }
+
+  .home-bars {
+    display: flex; gap: 14px; margin-top: 8px; width: 100%; justify-content: center;
+  }
+  .home-bar { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .home-bar-label { font-size: 8px; color: var(--dim); text-transform: uppercase; }
+  .home-bar-track { width: 80px; height: 7px; background: #111118; border-radius: 4px; overflow: hidden; }
+  .home-bar-fill { height: 100%; border-radius: 4px; }
+  .home-bar-fill.spd { background: linear-gradient(90deg,#1a4477,#44aaff); width: 50%; }
+  .home-bar-fill.int { background: linear-gradient(90deg,#773311,#ff6644); width: 78%; }
+  .home-bar-val { font-size: 9px; color: #777; }
+
+  .home-colors {
+    display: flex; align-items: center; gap: 8px; margin-top: 8px;
+  }
+  .home-csw {
+    width: 22px; height: 22px; border-radius: 50%;
+    border: 1.5px solid rgba(255,255,255,0.1);
+  }
+  .home-csw.c1 { background: #ff6b2b; border-color: rgba(255,255,255,0.4); }
+  .home-csw.c2 { background: #003388; }
+  .home-csw.c3 { background: #220044; opacity: 0.4; }
+  .home-pal-strip {
+    width: 80px; height: 7px; border-radius: 4px;
+    background: linear-gradient(90deg,#000,#f00,#f80,#ff0,#fff);
+    opacity: 0.4;
+  }
+
+  .home-nav-hints {
+    position: absolute; bottom: 18px; font-size: 9px; color: #1e1e28;
+    letter-spacing: 0.06em;
+  }
+
+  /* ===== NAV CONTROLS ===== */
+  .nav-controls {
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    margin-top: 4px;
+  }
+  .nav-row {
+    display: flex; gap: 6px; align-items: center; justify-content: center;
+  }
+  .nav-btn {
+    padding: 6px 12px; border-radius: 5px; font-size: 0.6rem;
+    font-family: 'JetBrains Mono', monospace; cursor: pointer;
+    border: 1px solid var(--border-light); background: var(--panel);
+    color: var(--dim); transition: all 0.15s; min-width: 44px; text-align: center;
+    user-select: none;
+  }
+  .nav-btn:hover { border-color: var(--orange); color: var(--orange); background: rgba(255,107,43,0.06); }
+  .nav-btn:active { transform: scale(0.95); }
+  .nav-btn.swipe { color: #ff6b2b88; border-color: #ff6b2b44; }
+  .nav-btn.swipe:hover { color: var(--orange); border-color: var(--orange); }
+  .nav-btn.action { color: #00cc5588; border-color: #00cc5544; }
+  .nav-btn.action:hover { color: var(--green); border-color: var(--green); }
+  .nav-btn.disabled { opacity: 0.2; pointer-events: none; }
+  .nav-btn.home-btn { border-color: var(--orange); color: var(--orange); font-weight: 600; }
+
+  /* ===== SIDEBAR — MAP + LEGEND ===== */
+  .sidebar {
+    display: flex; flex-direction: column; gap: 20px;
+    max-width: 420px; flex-shrink: 1;
+  }
+
+  /* Mini map */
+  .mini-map {
+    padding: 16px; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 8px;
+  }
+  .mini-map h3 {
+    font-size: 0.65rem; color: var(--orange); letter-spacing: 0.1em;
+    text-transform: uppercase; margin-bottom: 10px; font-weight: 400;
+  }
+  .map-grid {
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    font-size: 0.55rem;
+  }
+  .map-row { display: flex; align-items: center; gap: 4px; justify-content: center; flex-wrap: wrap; }
+  .map-node {
+    padding: 4px 7px; border: 1px solid var(--border);
+    border-radius: 3px; color: var(--dim); background: var(--bg);
+    cursor: pointer; transition: all 0.15s; text-align: center; min-width: 58px;
+    white-space: nowrap; font-family: 'JetBrains Mono', monospace; font-size: 0.52rem;
+  }
+  .map-node:hover { border-color: var(--orange); color: var(--text); }
+  .map-node.active { border-color: var(--orange); color: var(--orange); background: rgba(255,107,43,0.08); font-weight: 600; }
+  .map-node.future { border-style: dashed; opacity: 0.4; }
+  .map-arrow { color: var(--hint); font-size: 0.7rem; }
+  .map-arrow.v { transform: rotate(90deg); }
+  .map-section-label {
+    font-size: 0.48rem; color: var(--hint); text-transform: uppercase;
+    letter-spacing: 0.1em; margin: 4px 0 2px;
+  }
+
+  /* Legend */
+  .legend {
+    padding: 16px; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 8px;
+  }
+  .legend h3 {
+    font-size: 0.65rem; color: var(--orange); letter-spacing: 0.1em;
+    text-transform: uppercase; margin-bottom: 8px; font-weight: 400;
+  }
+  .legend-item {
+    display: flex; gap: 8px; margin-bottom: 4px; align-items: center;
+  }
+  .legend-key {
+    font-size: 0.58rem; color: var(--amber); font-weight: 600;
+    min-width: 80px; white-space: nowrap;
+  }
+  .legend-val { font-size: 0.58rem; color: #777; }
+  .legend-note {
+    font-size: 0.52rem; color: var(--hint); font-style: italic;
+    margin-top: 6px; padding: 5px 7px; border-left: 2px solid var(--border);
+    background: rgba(255,107,43,0.02);
+  }
+
+  /* ===== LIST ITEMS (reused across screens) ===== */
+  .list-item {
+    display: flex; align-items: center; gap: 6px;
+    padding: 5px 6px; border-radius: 4px; width: 100%;
+    min-height: 28px; font-size: 10px; color: var(--text);
+  }
+  .list-item:hover { background: rgba(255,107,43,0.04); }
+  .list-item.sel { background: rgba(255,107,43,0.08); color: var(--orange); }
+  .list-item .li-icon { font-size: 12px; width: 16px; text-align: center; flex-shrink: 0; }
+  .list-item .li-name { flex-grow: 1; }
+  .list-item .li-meta { font-size: 8px; color: var(--dim); }
+
+  /* MIDI grid pads */
+  .midi-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    gap: 5px; width: 100%; max-width: 220px;
+  }
+  .midi-pad {
+    aspect-ratio: 1; border-radius: 5px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    border: 1px solid var(--border); background: #0a0a12;
+    font-size: 8px; color: var(--dim); gap: 1px;
+  }
+  .midi-pad.assigned { border-color: #333; background: #0e0e18; }
+  .midi-pad.active { border-color: var(--orange); background: rgba(255,107,43,0.06); }
+  .midi-pad.active .midi-id { color: var(--orange); }
+  .midi-pad.active .midi-name { color: var(--amber); }
+  .midi-id { font-size: 9px; }
+  .midi-name { font-size: 7px; text-align: center; line-height: 1.2; color: #666; }
+  .midi-page-dots {
+    display: flex; gap: 6px; margin-top: 4px; align-items: center;
+    font-size: 9px; color: var(--dim);
+  }
+  .midi-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--hint); }
+  .midi-dot.active { background: var(--orange); }
+
+  /* FX Drawer sections */
+  .drawer-section { width: 100%; margin-bottom: 6px; }
+  .drawer-section-title {
+    font-size: 9px; color: var(--dim); text-transform: uppercase;
+    letter-spacing: 0.08em; margin-bottom: 3px; padding-bottom: 2px;
+    border-bottom: 1px solid var(--border);
+  }
+  .drawer-row {
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px;
+    margin-bottom: 3px; font-size: 10px; min-height: 26px;
+  }
+  .drawer-row .dr-label { color: var(--dim); font-size: 9px; width: 44px; }
+  .drawer-row .dr-value { color: #fff; flex-grow: 1; }
+  .drawer-row .dr-arrow { color: var(--hint); }
+
+  .drawer-param {
+    display: flex; align-items: center; gap: 6px; margin-bottom: 4px;
+  }
+  .drawer-param .dp-label { font-size: 9px; color: #888; width: 48px; text-align: right; }
+  .drawer-param .dp-track { flex-grow: 1; height: 8px; background: #111118; border-radius: 4px; overflow: hidden; }
+  .drawer-param .dp-fill { height: 100%; border-radius: 4px; }
+  .drawer-param .dp-val { font-size: 9px; color: #888; width: 28px; }
+
+  /* Group Hot Keys */
+  .hotkey-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    gap: 5px; width: 100%; max-width: 220px;
+  }
+  .hotkey-btn {
+    padding: 8px 4px; border-radius: 5px;
+    border: 1px solid var(--border-light); background: #0c0c14;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    font-size: 9px; color: var(--text); gap: 2px; min-height: 42px;
+  }
+  .hotkey-btn.active { border-color: var(--purple); color: var(--purple); background: rgba(170,102,255,0.06); }
+  .hotkey-cnt { font-size: 7px; color: var(--dim); }
+
+  /* Preset manage */
+  .preset-item {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 6px 8px; border-radius: 4px; width: 100%;
+    min-height: 30px; font-size: 10px;
+  }
+  .preset-item .pi-name { color: var(--text); }
+  .preset-item .pi-acts { display: flex; gap: 8px; }
+  .preset-item .pi-edit { color: var(--blue); font-size: 9px; }
+  .preset-item .pi-del { color: var(--red); font-size: 9px; }
+
+  /* Transition animation */
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  .screen-view.active { animation: fadeIn 0.12s ease; }
+
+  /* Responsive */
+  @media (max-width: 800px) {
+    .layout { flex-direction: column; align-items: center; }
+    .sidebar { max-width: 340px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="top-bar">
+  <h1>WLED Navigation Prototype</h1>
+  <div class="breadcrumb">
+    <span id="breadcrumb-path">home</span> → <span class="current" id="breadcrumb-current">Home Page</span>
+  </div>
+</div>
+
+<div class="layout">
+
+<!-- ===== DISPLAY ===== -->
+<div class="display-unit">
+<div class="display-container">
+<div class="display-bezel"></div>
+<div class="display-screen" id="screen">
+
+  <!-- HOME PAGE -->
+  <div class="screen-view active" id="scr-home">
+    <div class="home-bri-arc">
+      <svg viewBox="0 0 296 296">
+        <circle cx="148" cy="148" r="138" fill="none" stroke="#0e0e14" stroke-width="10" stroke-dasharray="654 214" stroke-dashoffset="-107" stroke-linecap="round"/>
+        <circle cx="148" cy="148" r="138" fill="none" stroke="url(#arc-grad)" stroke-width="10" stroke-dasharray="458 410" stroke-dashoffset="-107" stroke-linecap="round"/>
+        <defs><linearGradient id="arc-grad" x1="0%" y1="100%" x2="100%" y2="0%"><stop offset="0%" stop-color="#332200"/><stop offset="60%" stop-color="#ff8800"/><stop offset="100%" stop-color="#ffcc44"/></linearGradient></defs>
+      </svg>
+    </div>
+    <div class="content">
+      <div class="scr-hint-top">▲ groups</div>
+      <div class="scr-hint-bot">▼ effects</div>
+      <div class="scr-hint-left">◄ scenes</div>
+      <div class="scr-hint-right">midi ►</div>
+      <div class="home-device">wled-37cac0 <span style="font-size:8px;opacity:0.5">▾</span> <span class="home-device-sub">(+2)</span></div>
+      <div class="home-top-row">
+        <div class="home-preset-box">
+          <div class="home-preset-label">Preset</div>
+          <div class="home-preset-val">P03</div>
+          <div class="home-preset-name">Sunset Fire</div>
+        </div>
+        <div class="home-bri-pwr">
+          <div class="home-bri-val">☀ 178</div>
+          <div class="home-pwr"><div class="home-pwr-dot"></div></div>
+        </div>
+      </div>
+      <div class="home-fx-hero">
+        <div class="home-fx-cat">🔥 Fire</div>
+        <div class="home-fx-name">Fire 2012</div>
+      </div>
+      <div class="home-bars">
+        <div class="home-bar"><div class="home-bar-label">Speed</div><div class="home-bar-track"><div class="home-bar-fill spd"></div></div><div class="home-bar-val">128</div></div>
+        <div class="home-bar"><div class="home-bar-label">Intensity</div><div class="home-bar-track"><div class="home-bar-fill int"></div></div><div class="home-bar-val">200</div></div>
+      </div>
+      <div class="home-colors">
+        <div class="home-csw c1"></div>
+        <div class="home-csw c2"></div>
+        <div class="home-csw c3"></div>
+        <div class="home-pal-strip"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- GROUP HOT KEYS -->
+  <div class="screen-view" id="scr-group-hotkeys">
+    <div class="content">
+      <div class="scr-hint-top">▲ devices</div>
+      <div class="scr-hint-bot">▼ home</div>
+      <div class="scr-title" style="color:var(--purple)">Group Hot Keys</div>
+      <div class="scr-sub">tap to activate · quick switch</div>
+      <div class="hotkey-grid">
+        <div class="hotkey-btn active">North Wall<div class="hotkey-cnt">3 devs</div></div>
+        <div class="hotkey-btn">South Entry<div class="hotkey-cnt">2 devs</div></div>
+        <div class="hotkey-btn">Full Install<div class="hotkey-cnt">7 devs</div></div>
+        <div class="hotkey-btn">Beacons<div class="hotkey-cnt">4 devs</div></div>
+        <div class="hotkey-btn">Studio<div class="hotkey-cnt">1 dev</div></div>
+        <div class="hotkey-btn" style="border-style:dashed;opacity:0.4">+ Add</div>
+      </div>
+      <div style="display:flex;gap:12px;margin-top:6px;font-size:9px;color:var(--hint)">
+        <span>← manage</span><span>|</span><span>list →</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- DEVICE LIST -->
+  <div class="screen-view" id="scr-device-list">
+    <div class="content">
+      <div class="scr-hint-bot">▼ groups</div>
+      <div class="scr-title" style="color:var(--orange)">Devices</div>
+      <div class="scr-sub">7 found · tap to select</div>
+      <div class="scroll-area">
+        <div class="list-item sel"><span class="li-icon">✓</span><span class="li-name">wled-37cac0</span><span class="li-meta">.96</span></div>
+        <div class="list-item"><span class="li-icon">✓</span><span class="li-name">wled-2c55b4</span><span class="li-meta">.94</span></div>
+        <div class="list-item"><span class="li-icon">✓</span><span class="li-name">wled-37cac0-2</span><span class="li-meta">.88</span></div>
+        <div class="list-item"><span class="li-icon">☐</span><span class="li-name">wled-37cac0-3</span><span class="li-meta">.87</span></div>
+        <div class="list-item"><span class="li-icon">☐</span><span class="li-name">wled-37cac0-4</span><span class="li-meta">.85</span></div>
+        <div class="list-item"><span class="li-icon">☐</span><span class="li-name">wled-37cac0-5</span><span class="li-meta">.84</span></div>
+        <div class="list-item"><span class="li-icon">☐</span><span class="li-name">wled-f7b158</span><span class="li-meta">.86</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MANAGE GROUPS -->
+  <div class="screen-view" id="scr-manage-groups">
+    <div class="content">
+      <div class="scr-hint-bot">▼ home</div>
+      <div class="scr-title" style="color:var(--blue)">Manage Groups</div>
+      <div class="scr-sub">edit · delete</div>
+      <div class="scroll-area">
+        <div class="preset-item"><span class="pi-name">North Wall (3)</span><div class="pi-acts"><span class="pi-edit">edit</span><span class="pi-del">×</span></div></div>
+        <div class="preset-item"><span class="pi-name">South Entry (2)</span><div class="pi-acts"><span class="pi-edit">edit</span><span class="pi-del">×</span></div></div>
+        <div class="preset-item"><span class="pi-name">Full Install (7)</span><div class="pi-acts"><span class="pi-edit">edit</span><span class="pi-del">×</span></div></div>
+        <div class="preset-item"><span class="pi-name">Beacons (4)</span><div class="pi-acts"><span class="pi-edit">edit</span><span class="pi-del">×</span></div></div>
+      </div>
+      <div style="font-size:10px;color:var(--green);margin-top:4px;padding:5px 12px;border:1px solid rgba(0,204,85,0.3);border-radius:4px;">+ New Group</div>
+    </div>
+  </div>
+
+  <!-- GROUP LIST -->
+  <div class="screen-view" id="scr-group-list">
+    <div class="content">
+      <div class="scr-hint-bot">▼ home</div>
+      <div class="scr-title" style="color:var(--purple)">Groups</div>
+      <div class="scr-sub">tap to load · UDP sync</div>
+      <div class="scroll-area">
+        <div class="list-item sel"><span class="li-icon">◈</span><span class="li-name">North Wall (3)</span></div>
+        <div class="list-item"><span class="li-icon">◈</span><span class="li-name">South Entry (2)</span></div>
+        <div class="list-item"><span class="li-icon">◈</span><span class="li-name">Full Install (7)</span></div>
+        <div class="list-item"><span class="li-icon">◈</span><span class="li-name">Beacons (4)</span></div>
+        <div class="list-item" style="color:#666;font-style:italic"><span class="li-icon" style="color:#555">◇</span><span class="li-name">All Devices (UDP)</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MIDI TRIGGERS PAGE 1 -->
+  <div class="screen-view" id="scr-midi-1">
+    <div class="content">
+      <div class="scr-hint-left">◄ home</div>
+      <div class="scr-title" style="color:var(--orange);font-size:11px;">Preset Triggers</div>
+      <div class="scr-sub">tap = fire · long = assign</div>
+      <div class="midi-grid">
+        <div class="midi-pad active"><div class="midi-id">P01</div><div class="midi-name">Sunset Fire</div></div>
+        <div class="midi-pad assigned"><div class="midi-id">P02</div><div class="midi-name">Ocean Calm</div></div>
+        <div class="midi-pad assigned"><div class="midi-id">P03</div><div class="midi-name">Rave Mode</div></div>
+        <div class="midi-pad assigned"><div class="midi-id">P04</div><div class="midi-name">Night Glow</div></div>
+        <div class="midi-pad assigned"><div class="midi-id">P05</div><div class="midi-name">Rainbow</div></div>
+        <div class="midi-pad assigned"><div class="midi-id">P06</div><div class="midi-name">Twinkle</div></div>
+        <div class="midi-pad"><div class="midi-id">P07</div><div class="midi-name" style="color:#333">empty</div></div>
+        <div class="midi-pad"><div class="midi-id">P08</div><div class="midi-name" style="color:#333">empty</div></div>
+        <div class="midi-pad assigned"><div class="midi-id">P09</div><div class="midi-name">All Off</div></div>
+        <div class="midi-pad assigned"><div class="midi-id">P10</div><div class="midi-name">Full White</div></div>
+        <div class="midi-pad"><div class="midi-id">P11</div><div class="midi-name" style="color:#333">empty</div></div>
+        <div class="midi-pad"><div class="midi-id">P12</div><div class="midi-name" style="color:#333">empty</div></div>
+      </div>
+      <div class="midi-page-dots">
+        <div class="midi-dot active"></div><div class="midi-dot"></div><div class="midi-dot"></div><div class="midi-dot"></div>
+        <span>pg 1/4</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- MIDI TRIGGERS PAGE 2 -->
+  <div class="screen-view" id="scr-midi-2">
+    <div class="content">
+      <div class="scr-hint-left">◄ home</div>
+      <div class="scr-title" style="color:var(--orange);font-size:11px;">Preset Triggers</div>
+      <div class="scr-sub">page 2</div>
+      <div class="midi-grid">
+        <div class="midi-pad assigned"><div class="midi-id">P13</div><div class="midi-name">Warm Glow</div></div>
+        <div class="midi-pad assigned"><div class="midi-id">P14</div><div class="midi-name">Storm</div></div>
+        <div class="midi-pad"><div class="midi-id">P15</div><div class="midi-name" style="color:#333">empty</div></div>
+        <div class="midi-pad"><div class="midi-id">P16</div><div class="midi-name" style="color:#333">empty</div></div>
+        <div class="midi-pad"><div class="midi-id">P17</div><div class="midi-name" style="color:#333">empty</div></div>
+        <div class="midi-pad"><div class="midi-id">P18</div><div class="midi-name" style="color:#333">empty</div></div>
+        <div class="midi-pad"><div class="midi-id">P19</div><div class="midi-name" style="color:#333">empty</div></div>
+        <div class="midi-pad"><div class="midi-id">P20</div><div class="midi-name" style="color:#333">empty</div></div>
+        <div class="midi-pad"><div class="midi-id">P21</div><div class="midi-name" style="color:#333">empty</div></div>
+        <div class="midi-pad"><div class="midi-id">P22</div><div class="midi-name" style="color:#333">empty</div></div>
+        <div class="midi-pad"><div class="midi-id">P23</div><div class="midi-name" style="color:#333">empty</div></div>
+        <div class="midi-pad"><div class="midi-id">P24</div><div class="midi-name" style="color:#333">empty</div></div>
+      </div>
+      <div class="midi-page-dots">
+        <div class="midi-dot"></div><div class="midi-dot active"></div><div class="midi-dot"></div><div class="midi-dot"></div>
+        <span>pg 2/4</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- MIDI TRIGGERS PAGE 3 -->
+  <div class="screen-view" id="scr-midi-3">
+    <div class="content">
+      <div class="scr-hint-left">◄ home</div>
+      <div class="scr-title" style="color:var(--orange);font-size:11px;">Preset Triggers</div>
+      <div class="scr-sub">page 3</div>
+      <div class="midi-grid">
+        <div class="midi-pad"><div class="midi-id">P25</div><div class="midi-name" style="color:#333">empty</div></div>
+        <div class="midi-pad"><div class="midi-id">P26</div><div class="midi-name" style="color:#333">empty</div></div>
+        <div class="midi-pad"><div class="midi-id">P27</div><div class="midi-name" style="color:#333">empty</div></div>
+        <div class="midi-pad"><div class="midi-id">P28</div><div class="midi-name" style="color:#333">empty</div></div>
+        <div class="midi-pad"><div class="midi-id">P29</div><div class="midi-name" style="color:#333">empty</div></div>
+        <div class="midi-pad"><div class="midi-id">P30</div><div class="midi-name" style="color:#333">empty</div></div>
+        <div class="midi-pad"><div class="midi-id">P31</div><div class="midi-name" style="color:#333">empty</div></div>
+        <div class="midi-pad"><div class="midi-id">P32</div><div class="midi-name" style="color:#333">empty</div></div>
+        <div class="midi-pad"><div class="midi-id">P33</div><div class="midi-name" style="color:#333">empty</div></div>
+        <div class="midi-pad"><div class="midi-id">P34</div><div class="midi-name" style="color:#333">empty</div></div>
+        <div class="midi-pad"><div class="midi-id">P35</div><div class="midi-name" style="color:#333">empty</div></div>
+        <div class="midi-pad"><div class="midi-id">P36</div><div class="midi-name" style="color:#333">empty</div></div>
+      </div>
+      <div class="midi-page-dots">
+        <div class="midi-dot"></div><div class="midi-dot"></div><div class="midi-dot active"></div><div class="midi-dot"></div>
+        <span>pg 3/4</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- MIDI TRIGGERS PAGE 4 -->
+  <div class="screen-view" id="scr-midi-4">
+    <div class="content">
+      <div class="scr-hint-left">◄ home</div>
+      <div class="scr-title" style="color:var(--orange);font-size:11px;">Preset Triggers</div>
+      <div class="scr-sub">page 4</div>
+      <div class="midi-grid">
+        <div class="midi-pad"><div class="midi-id">P37</div><div class="midi-name" style="color:#333">empty</div></div>
+        <div class="midi-pad"><div class="midi-id">P38</div><div class="midi-name" style="color:#333">empty</div></div>
+        <div class="midi-pad"><div class="midi-id">P39</div><div class="midi-name" style="color:#333">empty</div></div>
+        <div class="midi-pad"><div class="midi-id">P40</div><div class="midi-name" style="color:#333">empty</div></div>
+        <div class="midi-pad"><div class="midi-id">P41</div><div class="midi-name" style="color:#333">empty</div></div>
+        <div class="midi-pad"><div class="midi-id">P42</div><div class="midi-name" style="color:#333">empty</div></div>
+        <div class="midi-pad"><div class="midi-id">P43</div><div class="midi-name" style="color:#333">empty</div></div>
+        <div class="midi-pad"><div class="midi-id">P44</div><div class="midi-name" style="color:#333">empty</div></div>
+        <div class="midi-pad"><div class="midi-id">P45</div><div class="midi-name" style="color:#333">empty</div></div>
+        <div class="midi-pad"><div class="midi-id">P46</div><div class="midi-name" style="color:#333">empty</div></div>
+        <div class="midi-pad"><div class="midi-id">P47</div><div class="midi-name" style="color:#333">empty</div></div>
+        <div class="midi-pad"><div class="midi-id">P48</div><div class="midi-name" style="color:#333">empty</div></div>
+      </div>
+      <div class="midi-page-dots">
+        <div class="midi-dot"></div><div class="midi-dot"></div><div class="midi-dot"></div><div class="midi-dot active"></div>
+        <span>pg 4/4</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- EFFECTS DRAWER -->
+  <div class="screen-view" id="scr-fx-drawer">
+    <div class="content" style="padding-top:24px;justify-content:flex-start;">
+      <div class="scr-hint-top">▲ home</div>
+      <div class="scr-title" style="color:var(--orange)">Effects</div>
+      <div class="scr-sub">tap value → encoder adjusts</div>
+      <div class="drawer-section">
+        <div class="drawer-section-title">Current</div>
+        <div class="drawer-row"><span class="dr-label">Effect</span><span class="dr-value">Fire 2012</span><span class="dr-arrow">▸</span></div>
+        <div class="drawer-row"><span class="dr-label">Palette</span><span class="dr-value">Lava</span><span class="dr-arrow">▸</span></div>
+      </div>
+      <div class="drawer-section">
+        <div class="drawer-section-title">Parameters</div>
+        <div class="drawer-param"><span class="dp-label">Speed</span><div class="dp-track"><div class="dp-fill" style="width:50%;background:linear-gradient(90deg,#1a4477,#44aaff)"></div></div><span class="dp-val">128</span></div>
+        <div class="drawer-param"><span class="dp-label">Intensity</span><div class="dp-track"><div class="dp-fill" style="width:78%;background:linear-gradient(90deg,#773311,#ff6644)"></div></div><span class="dp-val">200</span></div>
+      </div>
+      <div style="display:flex;gap:10px;font-size:9px;color:var(--hint);margin-top:2px;">
+        <span>← fav fx</span><span>|</span><span>palettes →</span>
+      </div>
+      <div style="font-size:8px;color:var(--hint);margin-top:2px;">▼ presets</div>
+    </div>
+  </div>
+
+  <!-- EFFECTS FAVORITES -->
+  <div class="screen-view" id="scr-fx-favorites">
+    <div class="content">
+      <div class="scr-title" style="color:var(--amber)">★ Favorite FX</div>
+      <div class="scr-sub">quick access · encoder scroll</div>
+      <div class="scroll-area">
+        <div class="list-item sel"><span class="li-icon">★</span><span class="li-name">Fire 2012</span><span class="li-meta">#66</span></div>
+        <div class="list-item"><span class="li-icon">★</span><span class="li-name">Rainbow</span><span class="li-meta">#9</span></div>
+        <div class="list-item"><span class="li-icon">★</span><span class="li-name">Twinkle Fox</span><span class="li-meta">#80</span></div>
+        <div class="list-item"><span class="li-icon">★</span><span class="li-name">Meteor Rain</span><span class="li-meta">#42</span></div>
+        <div class="list-item"><span class="li-icon">★</span><span class="li-name">Noise 1</span><span class="li-meta">#69</span></div>
+      </div>
+      <div style="display:flex;gap:10px;font-size:9px;color:var(--hint);margin-top:4px;">
+        <span>← categories</span><span>|</span><span>drawer →</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- EFFECTS CATEGORIES -->
+  <div class="screen-view" id="scr-fx-categories">
+    <div class="content">
+      <div class="scr-title" style="color:var(--orange)">Categories</div>
+      <div class="scr-sub">encoder scroll · tap to enter</div>
+      <div class="scroll-area">
+        <div class="list-item"><span class="li-icon">■</span><span class="li-name">Solid (1)</span></div>
+        <div class="list-item"><span class="li-icon">⚡</span><span class="li-name">Blink/Strobe (7)</span></div>
+        <div class="list-item"><span class="li-icon">→</span><span class="li-name">Wipe/Sweep (9)</span></div>
+        <div class="list-item"><span class="li-icon">►►</span><span class="li-name">Chase (12)</span></div>
+        <div class="list-item"><span class="li-icon">🌈</span><span class="li-name">Rainbow (8)</span></div>
+        <div class="list-item sel"><span class="li-icon">🔥</span><span class="li-name">Fire/Flicker (2)</span></div>
+        <div class="list-item"><span class="li-icon">✦</span><span class="li-name">Twinkle (7)</span></div>
+        <div class="list-item"><span class="li-icon">~</span><span class="li-name">Wave/Run (9)</span></div>
+      </div>
+      <div style="display:flex;gap:10px;font-size:9px;color:var(--hint);margin-top:4px;">
+        <span>← list</span><span>|</span><span>fav →</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- EFFECTS LIST -->
+  <div class="screen-view" id="scr-fx-list">
+    <div class="content">
+      <div class="scr-title" style="color:var(--orange)">🔥 Fire / Flicker</div>
+      <div class="scr-sub">encoder scroll · press = apply</div>
+      <div class="scroll-area">
+        <div style="font-size:9px;color:var(--dim);margin-bottom:4px;display:flex;gap:6px;align-items:center;width:100%;">
+          <span style="color:var(--hint)">◂</span><span>Back to categories</span>
+        </div>
+        <div class="list-item"><span class="li-meta" style="min-width:20px">45</span><span class="li-name">Fire Flicker</span></div>
+        <div class="list-item sel"><span class="li-meta" style="min-width:20px">66</span><span class="li-name" style="font-weight:600">Fire 2012</span></div>
+      </div>
+      <div style="font-size:9px;color:var(--hint);margin-top:4px;">
+        <span>categories →</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- PALETTE FAVORITES -->
+  <div class="screen-view" id="scr-pal-favorites">
+    <div class="content">
+      <div class="scr-title" style="color:var(--purple)">★ Favorite Palettes</div>
+      <div class="scr-sub">quick access · encoder scroll</div>
+      <div class="scroll-area">
+        <div class="list-item sel"><span class="li-icon">★</span><span class="li-name">Lava</span></div>
+        <div class="list-item"><span class="li-icon">★</span><span class="li-name">Ocean</span></div>
+        <div class="list-item"><span class="li-icon">★</span><span class="li-name">Forest</span></div>
+        <div class="list-item"><span class="li-icon">★</span><span class="li-name">Party</span></div>
+        <div class="list-item"><span class="li-icon">★</span><span class="li-name">Rainbow</span></div>
+      </div>
+      <div style="display:flex;gap:10px;font-size:9px;color:var(--hint);margin-top:4px;">
+        <span>← drawer</span><span>|</span><span>all palettes →</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- PALETTE LIST -->
+  <div class="screen-view" id="scr-pal-list">
+    <div class="content">
+      <div class="scr-title" style="color:var(--purple)">All Palettes</div>
+      <div class="scr-sub">75 palettes · encoder scroll</div>
+      <div class="scroll-area">
+        <div class="list-item"><span class="li-meta" style="min-width:16px">0</span><span class="li-name">Default</span></div>
+        <div class="list-item"><span class="li-meta" style="min-width:16px">1</span><span class="li-name">Random Cycle</span></div>
+        <div class="list-item"><span class="li-meta" style="min-width:16px">2</span><span class="li-name">Primary Color</span></div>
+        <div class="list-item sel"><span class="li-meta" style="min-width:16px">5</span><span class="li-name" style="font-weight:600">Lava</span></div>
+        <div class="list-item"><span class="li-meta" style="min-width:16px">6</span><span class="li-name">Cloud</span></div>
+        <div class="list-item"><span class="li-meta" style="min-width:16px">7</span><span class="li-name">Forest</span></div>
+        <div class="list-item"><span class="li-meta" style="min-width:16px">8</span><span class="li-name">Ocean</span></div>
+      </div>
+      <div style="font-size:9px;color:var(--hint);margin-top:4px;">
+        <span>← favorites</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- PRESET ADD/LOAD/DELETE -->
+  <div class="screen-view" id="scr-presets">
+    <div class="content">
+      <div class="scr-hint-top">▲ drawer</div>
+      <div class="scr-title" style="color:var(--green)">Presets</div>
+      <div class="scr-sub">add · load · delete</div>
+      <div class="scroll-area">
+        <div class="preset-item"><span class="pi-name">Sunset Fire</span><div class="pi-acts"><span class="pi-edit">load</span><span class="pi-del">×</span></div></div>
+        <div class="preset-item"><span class="pi-name">Ocean Calm</span><div class="pi-acts"><span class="pi-edit">load</span><span class="pi-del">×</span></div></div>
+        <div class="preset-item"><span class="pi-name">Rave Mode</span><div class="pi-acts"><span class="pi-edit">load</span><span class="pi-del">×</span></div></div>
+        <div class="preset-item"><span class="pi-name">Night Glow</span><div class="pi-acts"><span class="pi-edit">load</span><span class="pi-del">×</span></div></div>
+      </div>
+      <div style="font-size:10px;color:var(--green);margin-top:6px;padding:5px 12px;border:1px solid rgba(0,204,85,0.3);border-radius:4px;">+ Save Current</div>
+    </div>
+  </div>
+
+  <!-- FUTURE: SCENE BUILD -->
+  <div class="screen-view" id="scr-scenes">
+    <div class="content">
+      <div class="scr-hint-right">home ►</div>
+      <div class="scr-title" style="color:var(--dim)">Scene Builder</div>
+      <div class="scr-sub" style="color:var(--hint)">FUTURE — Phase 9+</div>
+      <div style="margin-top:30px;text-align:center;color:var(--hint);font-size:10px;line-height:1.6;">
+        Timed preset triggers<br>on specific groups<br>in sequence<br><br>
+        <span style="font-size:20px;opacity:0.3">🎬</span>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /display-screen -->
+</div><!-- /display-container -->
+
+<!-- NAV BUTTONS -->
+<div class="nav-controls">
+  <div class="nav-row">
+    <div class="nav-btn swipe" id="btn-up" onclick="navUp()">▲ swipe up</div>
+  </div>
+  <div class="nav-row">
+    <div class="nav-btn swipe" id="btn-left" onclick="navLeft()">◄</div>
+    <div class="nav-btn home-btn" onclick="goHome()">⌂</div>
+    <div class="nav-btn swipe" id="btn-right" onclick="navRight()">►</div>
+  </div>
+  <div class="nav-row">
+    <div class="nav-btn swipe" id="btn-down" onclick="navDown()">▼ swipe down</div>
+  </div>
+  <div class="nav-row" style="margin-top:4px;">
+    <div class="nav-btn action" id="btn-press" onclick="navPress()">⏎ press</div>
+    <div class="nav-btn action" id="btn-back" onclick="navBack()">↩ back</div>
+  </div>
+</div>
+</div><!-- /display-unit -->
+
+<!-- ===== SIDEBAR ===== -->
+<div class="sidebar">
+
+<!-- MINI MAP -->
+<div class="mini-map">
+  <h3>Screen Map</h3>
+
+  <div class="map-grid">
+    <div class="map-section-label">— device / group tier —</div>
+    <div class="map-row">
+      <div class="map-node" data-screen="scr-device-list">Device List</div>
+    </div>
+    <div class="map-row"><span class="map-arrow">↕</span></div>
+    <div class="map-row">
+      <div class="map-node" data-screen="scr-manage-groups">Manage</div>
+      <span class="map-arrow">↔</span>
+      <div class="map-node" data-screen="scr-group-hotkeys">Group Keys</div>
+      <span class="map-arrow">↔</span>
+      <div class="map-node" data-screen="scr-group-list">Group List</div>
+    </div>
+
+    <div class="map-section-label" style="margin-top:6px;">— home + midi tier —</div>
+    <div class="map-row"><span class="map-arrow">↕</span></div>
+    <div class="map-row">
+      <div class="map-node future" data-screen="scr-scenes">Scenes</div>
+      <span class="map-arrow">↔</span>
+      <div class="map-node active" data-screen="scr-home">HOME</div>
+      <span class="map-arrow">↔</span>
+      <div class="map-node" data-screen="scr-midi-1">MIDI 1</div>
+      <span class="map-arrow">↔</span>
+      <div class="map-node" data-screen="scr-midi-2">2</div>
+    </div>
+    <div class="map-row">
+      <span style="width:120px"></span>
+      <div class="map-node" data-screen="scr-midi-3">3</div>
+      <span class="map-arrow">↔</span>
+      <div class="map-node" data-screen="scr-midi-4">4</div>
+    </div>
+
+    <div class="map-section-label" style="margin-top:6px;">— effects / palette tier —</div>
+    <div class="map-row"><span class="map-arrow">↕</span></div>
+    <div class="map-row">
+      <div class="map-node" data-screen="scr-fx-list">FX List</div>
+      <span class="map-arrow">↔</span>
+      <div class="map-node" data-screen="scr-fx-categories">Categ.</div>
+      <span class="map-arrow">↔</span>
+      <div class="map-node" data-screen="scr-fx-favorites">★ FX</div>
+      <span class="map-arrow">↔</span>
+      <div class="map-node" data-screen="scr-fx-drawer">Drawer</div>
+      <span class="map-arrow">↔</span>
+      <div class="map-node" data-screen="scr-pal-favorites">★ Pal</div>
+      <span class="map-arrow">↔</span>
+      <div class="map-node" data-screen="scr-pal-list">Pal List</div>
+    </div>
+    <div class="map-row"><span class="map-arrow">↕</span></div>
+    <div class="map-row">
+      <div class="map-node" data-screen="scr-presets">Presets</div>
+    </div>
+  </div>
+</div>
+
+<!-- LEGEND -->
+<div class="legend">
+  <h3>Navigation Legend</h3>
+  <div class="legend-item"><span class="legend-key" style="color:#ff6b2b">Red arrows</span><span class="legend-val">Swipe gestures</span></div>
+  <div class="legend-item"><span class="legend-key" style="color:#00cc55">Green arrows</span><span class="legend-val">Encoder press / tap</span></div>
+  <div class="legend-item"><span class="legend-key">Encoder rotate</span><span class="legend-val">Scroll lists / adjust values</span></div>
+  <div class="legend-item"><span class="legend-key">Long press</span><span class="legend-val">Identify device / save preset</span></div>
+  <div class="legend-note">Home is always reachable — swipe toward center from any direction. MIDI pages cycle right→left through 1-4. Effects chain runs left←→right at the bottom tier.</div>
+</div>
+
+<!-- SCREEN COUNT -->
+<div class="legend">
+  <h3>Screen Inventory</h3>
+  <div class="legend-item"><span class="legend-key">Total screens</span><span class="legend-val">16 (14 active + 1 future + boot)</span></div>
+  <div class="legend-item"><span class="legend-key">Home</span><span class="legend-val">1 (main control)</span></div>
+  <div class="legend-item"><span class="legend-key">Group tier</span><span class="legend-val">4 (devices, hotkeys, list, manage)</span></div>
+  <div class="legend-item"><span class="legend-key">MIDI tier</span><span class="legend-val">4 pages</span></div>
+  <div class="legend-item"><span class="legend-key">Effects tier</span><span class="legend-val">5 (drawer, fav, categories, list, presets)</span></div>
+  <div class="legend-item"><span class="legend-key">Palette tier</span><span class="legend-val">2 (favorites, full list)</span></div>
+  <div class="legend-item"><span class="legend-key">Future</span><span class="legend-val">1 (scene builder)</span></div>
+</div>
+
+</div><!-- /sidebar -->
+</div><!-- /layout -->
+
+<script>
+// ===== NAVIGATION STATE MACHINE =====
+
+let currentScreen = 'scr-home';
+let history = [];
+
+// Complete navigation map: screen → { up, down, left, right, press, back }
+const navMap = {
+  'scr-home': {
+    up: 'scr-group-hotkeys',
+    down: 'scr-fx-drawer',
+    right: 'scr-midi-1',
+    left: 'scr-scenes',
+  },
+  // --- Group tier ---
+  'scr-group-hotkeys': {
+    up: 'scr-device-list',
+    down: 'scr-home',
+    left: 'scr-manage-groups',
+    right: 'scr-group-list',
+  },
+  'scr-device-list': {
+    down: 'scr-group-hotkeys',
+  },
+  'scr-manage-groups': {
+    right: 'scr-group-hotkeys',
+    down: 'scr-home',
+  },
+  'scr-group-list': {
+    left: 'scr-group-hotkeys',
+    down: 'scr-home',
+  },
+  // --- MIDI tier ---
+  'scr-midi-1': {
+    left: 'scr-home',
+    right: 'scr-midi-2',
+    up: 'scr-midi-3',
+    down: 'scr-midi-4',
+  },
+  'scr-midi-2': {
+    left: 'scr-midi-1',
+    right: 'scr-midi-3',
+  },
+  'scr-midi-3': {
+    left: 'scr-midi-4',
+    right: 'scr-midi-2',
+    down: 'scr-midi-1',
+    up: 'scr-group-hotkeys',
+  },
+  'scr-midi-4': {
+    right: 'scr-midi-3',
+    up: 'scr-midi-1',
+    left: 'scr-home',
+  },
+  // --- Effects tier ---
+  'scr-fx-drawer': {
+    up: 'scr-home',
+    left: 'scr-fx-favorites',
+    right: 'scr-pal-favorites',
+    down: 'scr-presets',
+  },
+  'scr-fx-favorites': {
+    left: 'scr-fx-categories',
+    right: 'scr-fx-drawer',
+  },
+  'scr-fx-categories': {
+    left: 'scr-fx-list',
+    right: 'scr-fx-favorites',
+  },
+  'scr-fx-list': {
+    right: 'scr-fx-categories',
+  },
+  'scr-pal-favorites': {
+    left: 'scr-fx-drawer',
+    right: 'scr-pal-list',
+  },
+  'scr-pal-list': {
+    left: 'scr-pal-favorites',
+  },
+  'scr-presets': {
+    up: 'scr-fx-drawer',
+  },
+  // --- Future ---
+  'scr-scenes': {
+    right: 'scr-home',
+  },
+};
+
+// Screen display names for breadcrumb
+const screenNames = {
+  'scr-home': 'Home Page',
+  'scr-group-hotkeys': 'Group Hot Keys',
+  'scr-device-list': 'Device List',
+  'scr-manage-groups': 'Manage Groups',
+  'scr-group-list': 'Group List',
+  'scr-midi-1': 'MIDI Triggers — Page 1',
+  'scr-midi-2': 'MIDI Triggers — Page 2',
+  'scr-midi-3': 'MIDI Triggers — Page 3',
+  'scr-midi-4': 'MIDI Triggers — Page 4',
+  'scr-fx-drawer': 'Effects Drawer',
+  'scr-fx-favorites': 'Effects Favorites',
+  'scr-fx-categories': 'Effects Categories',
+  'scr-fx-list': 'Effects List',
+  'scr-pal-favorites': 'Palette Favorites',
+  'scr-pal-list': 'Palette List',
+  'scr-presets': 'Preset Add/Load/Delete',
+  'scr-scenes': 'Scene Builder (Future)',
+};
+
+// Screen tier paths for breadcrumb
+const screenPaths = {
+  'scr-home': 'home',
+  'scr-group-hotkeys': 'home → groups',
+  'scr-device-list': 'home → groups → devices',
+  'scr-manage-groups': 'home → groups → manage',
+  'scr-group-list': 'home → groups → list',
+  'scr-midi-1': 'home → midi',
+  'scr-midi-2': 'home → midi',
+  'scr-midi-3': 'home → midi',
+  'scr-midi-4': 'home → midi',
+  'scr-fx-drawer': 'home → effects',
+  'scr-fx-favorites': 'home → effects → favorites',
+  'scr-fx-categories': 'home → effects → categories',
+  'scr-fx-list': 'home → effects → categories → list',
+  'scr-pal-favorites': 'home → effects → palettes',
+  'scr-pal-list': 'home → effects → palettes → list',
+  'scr-presets': 'home → effects → presets',
+  'scr-scenes': 'home → scenes',
+};
+
+function navigateTo(screenId) {
+  if (screenId === currentScreen) return;
+  if (!document.getElementById(screenId)) return;
+
+  history.push(currentScreen);
+
+  // Hide current
+  document.getElementById(currentScreen).classList.remove('active');
+  // Show new
+  document.getElementById(screenId).classList.add('active');
+
+  currentScreen = screenId;
+  updateUI();
+}
+
+function goHome() {
+  navigateTo('scr-home');
+  history = [];
+}
+
+function navUp() {
+  const target = navMap[currentScreen]?.up;
+  if (target) navigateTo(target);
+}
+function navDown() {
+  const target = navMap[currentScreen]?.down;
+  if (target) navigateTo(target);
+}
+function navLeft() {
+  const target = navMap[currentScreen]?.left;
+  if (target) navigateTo(target);
+}
+function navRight() {
+  const target = navMap[currentScreen]?.right;
+  if (target) navigateTo(target);
+}
+function navPress() {
+  const target = navMap[currentScreen]?.press;
+  if (target) navigateTo(target);
+}
+function navBack() {
+  if (history.length > 0) {
+    const prev = history.pop();
+    document.getElementById(currentScreen).classList.remove('active');
+    document.getElementById(prev).classList.add('active');
+    currentScreen = prev;
+    updateUI();
+  }
+}
+
+function updateUI() {
+  // Update breadcrumb
+  document.getElementById('breadcrumb-path').textContent = screenPaths[currentScreen] || '';
+  document.getElementById('breadcrumb-current').textContent = screenNames[currentScreen] || currentScreen;
+
+  // Update mini-map active state
+  document.querySelectorAll('.map-node').forEach(node => {
+    node.classList.toggle('active', node.dataset.screen === currentScreen);
+  });
+
+  // Update nav button enabled states
+  const map = navMap[currentScreen] || {};
+  document.getElementById('btn-up').classList.toggle('disabled', !map.up);
+  document.getElementById('btn-down').classList.toggle('disabled', !map.down);
+  document.getElementById('btn-left').classList.toggle('disabled', !map.left);
+  document.getElementById('btn-right').classList.toggle('disabled', !map.right);
+  document.getElementById('btn-press').classList.toggle('disabled', !map.press);
+  document.getElementById('btn-back').classList.toggle('disabled', history.length === 0);
+}
+
+// Mini-map click navigation
+document.querySelectorAll('.map-node').forEach(node => {
+  node.addEventListener('click', () => {
+    const target = node.dataset.screen;
+    if (target) navigateTo(target);
+  });
+});
+
+// Keyboard support
+document.addEventListener('keydown', (e) => {
+  switch(e.key) {
+    case 'ArrowUp': e.preventDefault(); navUp(); break;
+    case 'ArrowDown': e.preventDefault(); navDown(); break;
+    case 'ArrowLeft': e.preventDefault(); navLeft(); break;
+    case 'ArrowRight': e.preventDefault(); navRight(); break;
+    case 'Enter': e.preventDefault(); navPress(); break;
+    case 'Backspace': e.preventDefault(); navBack(); break;
+    case 'Home': case 'h': if(!e.ctrlKey) { e.preventDefault(); goHome(); } break;
+  }
+});
+
+// Initialize
+updateUI();
+</script>
+
+</body>
+</html>

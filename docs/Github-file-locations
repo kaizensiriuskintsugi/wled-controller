@@ -1,0 +1,19 @@
+// Load the following files for project context.
+
+//  https://raw.githubusercontent.com/kaizensiriuskintsugi/wled-controller/main/docs/PDP.md
+// https://raw.githubusercontent.com/kaizensiriuskintsugi/wled-controller/main/docs/SOP.md
+// https://raw.githubusercontent.com/kaizensiriuskintsugi/wled-controller/main/docs/UNIFIED-CONTROL-SPEC.md
+// https://raw.githubusercontent.com/kaizensiriuskintsugi/wled-controller/main/platformio.ini
+// https://raw.githubusercontent.com/kaizensiriuskintsugi/wled-controller/main/src/main.cpp
+// https://raw.githubusercontent.com/kaizensiriuskintsugi/wled-controller/main/src/ui.cpp
+// https://raw.githubusercontent.com/kaizensiriuskintsugi/wled-controller/main/src/display.cpp
+// https://raw.githubusercontent.com/kaizensiriuskintsugi/wled-controller/main/src/input.cpp
+// https://raw.githubusercontent.com/kaizensiriuskintsugi/wled-controller/main/src/wled_api.cpp
+// https://raw.githubusercontent.com/kaizensiriuskintsugi/wled-controller/main/src/discovery.cpp
+// https://raw.githubusercontent.com/kaizensiriuskintsugi/wled-controller/main/src/wifi_manager.cpp
+// https://raw.githubusercontent.com/kaizensiriuskintsugi/wled-controller/main/include/ui.h
+// https://raw.githubusercontent.com/kaizensiriuskintsugi/wled-controller/main/include/display.h
+// https://raw.githubusercontent.com/kaizensiriuskintsugi/wled-controller/main/include/input.h
+// https://raw.githubusercontent.com/kaizensiriuskintsugi/wled-controller/main/include/wled_api.h
+// https://raw.githubusercontent.com/kaizensiriuskintsugi/wled-controller/main/include/discovery.h
+// https://raw.githubusercontent.com/kaizensiriuskintsugi/wled-controller/main/include/wifi_manager.h

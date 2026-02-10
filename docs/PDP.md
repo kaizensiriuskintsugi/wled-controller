@@ -1,9 +1,9 @@
 # WLED TOUCHSCREEN CONTROLLER
-## Product Development Plan v2.0
+## Product Development Plan v2.1
 
 **Created:** February 4, 2026
-**Updated:** February 8, 2026
-**Status:** Phase 8B Design Complete — Ready for 8B Implementation
+**Updated:** February 9, 2026
+**Status:** Phase 8B Navigation Design Complete — Ready for Implementation
 **Platform:** Waveshare ESP32-S3-Touch-LCD-1.28
 
 **See also:** `docs/SOP.md` for development workflow, Git procedures, and hardware lessons.
@@ -42,10 +42,11 @@ This controller shares the same hardware and many of the same patterns as the pl
 | 7E | UI: Color Picker | ✅ Complete | HSV hue ring, touch select, encoder saturation |
 | 7F | UI: Power & Navigation | ✅ Complete | Swipe up power toggle, all gestures wired |
 | 8A | Refinements | ✅ Complete | Caching, NVS persistence, smart boot, error handling, rescan |
-| 8B | Unified Control Design | ✅ Complete | 9-view architecture, all overlays designed, sizing validated |
-| 8B | Unified Control Build | ⬜ Pending | Implementation from spec |
+| 8B | Navigation Design | ✅ Complete | 3-tier 16-screen architecture, all flows mapped |
+| 8B | Navigation Build | ⬜ Pending | Implementation from spec |
 | 8C | Device Groups | ⬜ Pending | Group storage, UDP sync, manage UI |
-| 8D | Presets | ⬜ Pending | Save/recall, MIDI grid (future) |
+| 8D | Presets & MIDI | ⬜ Pending | Save/recall, MIDI grid |
+| 8E | Settings & Modes | ⬜ Pending | Live/Setup mode, inactivity timer, config |
 
 ---
 
@@ -66,8 +67,7 @@ include/
 docs/
   PDP.md                        — This file (project status, phases, decisions)
   SOP.md                        — Development workflow, Git procedures, hardware lessons
-  UNIFIED-CONTROL-SPEC.md       — Phase 8B implementation blueprint
-  unified-control-v6.html       — Visual mockup reference (open in browser)
+  wled-nav-mockup.html          — Interactive navigation prototype (open in browser)
 ```
 
 ### Module Architecture
@@ -86,22 +86,6 @@ See `docs/SOP.md` → Modular Architecture Rules for the dependency matrix.
 - Encoder (interrupt-driven, direction corrected), touch (CST816S with gesture lockout), all inputs consume-on-read
 
 ### Phase 7: UI Integration ✅ COMPLETE
-
-**Navigation Map (Current — Will Be Replaced by 8B)**
-
-| From | Action | To |
-|------|--------|----|
-| Device List | Tap / Encoder Press | Device Control |
-| Device Control | Encoder Rotate | Adjust Brightness |
-| Device Control | Encoder Press | Effect Browser |
-| Device Control | Swipe Left | Palette Browser |
-| Device Control | Swipe Right | Color Picker |
-| Device Control | Swipe Up | Toggle Power ON/OFF |
-| Device Control | Swipe Down | Device List |
-| Device Control | Long Press (enc/touch) | Identify Device (pulse) |
-| Effect Browser | Encoder Rotate/Press | Scroll / Apply → Control |
-| Palette Browser | Encoder Rotate/Press | Scroll / Apply → Control |
-| Color Picker | Touch ring / Encoder | Select hue / Adjust saturation |
 
 **Key Learnings:**
 - Generic browser functions eliminate duplicate code — effect and palette browsers share 100% of scroll/select logic
@@ -124,52 +108,137 @@ See `docs/SOP.md` → Modular Architecture Rules for the dependency matrix.
 
 ---
 
-## PHASE 8B: UNIFIED CONTROL
+## PHASE 8B: NAVIGATION ARCHITECTURE
 
 ### Design ✅ COMPLETE
-Full design documented in `docs/UNIFIED-CONTROL-SPEC.md` with visual reference in `docs/unified-control-v6.html`.
 
-**Key design decisions:**
-- 9-view architecture: 1 base screen + 8 overlays
-- Overlay system replaces multi-screen navigation
-- "Stage and send" pattern for batched API updates
-- 14 effect categories for organized browsing
-- Device groups with UDP sync capability
-- Preset save/recall system
-- Color source indicator (palette vs custom color)
-- Focus mode: tap parameter → encoder adjusts → press to exit
+Replaces the previous 9-view overlay architecture with a 3-tier, 16-screen navigation model. Interactive prototype in `docs/wled-nav-mockup.html`.
+
+### Screen Architecture — 3 Tiers, 16 Screens
+
+```
+TOP TIER — Device/Group Management
+┌─────────────┐     ┌──────────────────┐     ┌───────────────┐
+│ Device List │ ←→  │ Group Hot Keys   │ ←→  │ Manage Groups │
+│             │     │ (hub)            │     │ / Group List  │
+└─────────────┘     └──────────────────┘     └───────────────┘
+                           ↕ swipe ↑↓
+MIDDLE TIER — Central Hub
+                    ┌──────────────────┐
+  Scene Builder ←── │    HOME PAGE     │ ──→ MIDI Pages 1-4
+  (future)          │ (read-only hub)  │     (cycle with swipe)
+                    └──────────────────┘
+                           ↕ swipe ↑↓
+BOTTOM TIER — Effects, Palettes, Presets
+┌────────────────┐     ┌───────────────┐     ┌────────────┐
+│ Effects Drawer │ ←→  │ FX Favorites  │ ←→  │ Categories │ → FX List
+│ (hub)          │     │               │     │            │
+└────────────────┘     └───────────────┘     └────────────┘
+        ↕ swipe ←→
+┌────────────────┐     ┌───────────────┐
+│Palette Favorites│ ←→ │ Palette List  │
+└────────────────┘     └───────────────┘
+        ↕ swipe ↑↓
+┌────────────────┐     ┌───────────────┐     ┌───────────────┐
+│ Preset Add     │ ←→  │ Preset Load   │ ←→  │ Preset Delete │
+└────────────────┘     └───────────────┘     └───────────────┘
+```
+
+### Navigation Rules
+- **Red arrows (swipe gestures):** Move between screens directionally
+- **Green arrows (encoder press / tap):** Enter or confirm
+- **Home is always one swipe away** from any tier hub
+- **Encoder press from any hub → Home** (quick escape)
+- **Long-press encoder from Home → Settings** (off the compass)
+
+### Home Page — Read-Only Dashboard + Active Target Selector
+
+The Home screen serves two critical functions:
+
+1. **Status Display (read-only):** Shows current device/group name, active effect, brightness, power state. No interactive controls — prevents accidental changes from bumps during performance/installation.
+
+2. **Active Target Selector:** Encoder rotation cycles through connected devices/groups. The device/group currently displayed on Home becomes the "active target" — all other screens operate on whatever was last shown on Home. No commands are sent during cycling; it's purely selecting what to control next.
+
+This means Home is both the ambient status display AND the device/group switcher. Navigate away to any editing screen, and changes apply to the target last selected on Home.
+
+### Operating Modes — Live vs Setup
+
+A global mode toggle that affects how all editing screens behave:
+
+- **Live Mode:** Every change fires immediately to the active target device(s). Good for performance, jamming, real-time interaction.
+- **Setup Mode:** Changes are staged locally on the controller. Nothing transmits until explicit "send" command. Lets you compose an entire look — effect, palette, speed, colors, brightness — then push it atomically. No half-state flicker on the installation.
+
+Mode indicator must be persistent and visible on all editing screens. Toggle configured in Settings.
+
+### Preview System
+
+Preview = physical 8x8 LED matrix connected as a dedicated preview device on the network. Not an on-screen simulation (240px round display can't meaningfully simulate LED effects). In Setup mode, preview device receives staged changes for visual confirmation before broadcasting to the full group.
+
+### Inactivity Timer
+
+Auto-return to Home after configurable idle period (30-60 seconds default). Any input (encoder, touch, gesture) resets the timer. Since Home is read-only, this is safe landing behavior. Home doubles as ambient status display when controller sits idle during installation.
+
+### Settings Screen
+
+Accessed via **long-press encoder from Home**. Intentionally off the swipe compass to prevent accidental entry.
+
+Contents (planned):
+- Inactivity timer duration
+- Live/Setup mode toggle
+- Other user preferences (TBD as needs emerge)
 
 ### Implementation ⬜ PENDING
-Suggested sub-phases from spec:
-- [ ] 8B-1: Overlay framework (state machine, gesture routing)
-- [ ] 8B-2: Main control screen (arc, hero, bars, swatches)
-- [ ] 8B-3: Device panel + groups (multi-select, UDP)
-- [ ] 8B-4: Effect system (categories, drawer, full params)
-- [ ] 8B-5: Presets (save/recall, NVS storage)
+
+Suggested sub-phases:
+- [ ] 8B-1: Screen state machine + gesture routing framework (16 screens)
+- [ ] 8B-2: Home page (read-only dashboard, encoder device cycling)
+- [ ] 8B-3: Device list + group hot keys (top tier)
+- [ ] 8B-4: Effects drawer + favorites + categories + list (bottom tier)
+- [ ] 8B-5: Palette favorites + list
+- [ ] 8B-6: MIDI grid (4 pages, cycle with swipe)
+- [ ] 8B-7: Inactivity timer + Settings screen
 
 ---
 
-## PHASE 8C: DEVICE GROUPS & PRESETS ⬜ PENDING
+## PHASE 8C: DEVICE GROUPS ⬜ PENDING
 
-### Device Groups
 - [ ] Create named device groups (e.g., "North Wall", "All Beacons")
-- [ ] Group selection UI — tap to load, auto-check devices
+- [ ] Group hot keys screen — tap to load, auto-select devices
 - [ ] Group control via UDP unicast (specific devices) or broadcast (all)
 - [ ] NVS storage: `grp_N_name`, `grp_N_devs` (comma-separated device names)
 - [ ] Manage groups UI (create, edit, delete)
 - [ ] Max ~10 groups, ~10 devices per group
 
+---
+
+## PHASE 8D: PRESETS & MIDI ⬜ PENDING
+
 ### Presets
-- [ ] Preset save: snapshot current staged state + name
-- [ ] Preset recall: encoder scroll on main screen preset box
+- [ ] Save current state as new preset (snapshot staged state + name)
+- [ ] Load preset via encoder: scroll to number, send to active target
+- [ ] Edit mode toggle on preset list (not separate duplicate page)
+- [ ] 2-column layout for preset list (smaller items, more visible at once)
+- [ ] Delete, rename operations
 - [ ] NVS storage: `pre_N_name`, `pre_N_data` (JSON string)
 - [ ] Max ~20 presets
 - [ ] Apply to any device or group (not tied to specific hardware)
 
-### MIDI Grid (Future — Phase 8D or 9)
-- 4×3 trigger pad grid, 4 pages = 48 preset slots
-- Tap to fire preset, long-press to reassign
-- Placeholder in 8B design, implementation deferred
+### MIDI Grid
+- [ ] 4×3 trigger pad grid, 4 pages = 48 preset slots
+- [ ] Tap to fire preset, long-press to reassign
+- [ ] Swipe left/right to cycle pages
+- [ ] Assign/unassign presets to grid slots
+
+---
+
+## PHASE 8E: SETTINGS & MODES ⬜ PENDING
+
+- [ ] Settings screen UI (long-press encoder from Home)
+- [ ] Live/Setup mode toggle + persistent indicator
+- [ ] Inactivity timer configuration (30-60s range)
+- [ ] Setup mode: stage changes locally, "send" command to push
+- [ ] Preview device integration (8x8 matrix receives staged changes)
+- [ ] Additional preferences as needs emerge
 
 ---
 
@@ -233,14 +302,20 @@ Suggested sub-phases from spec:
 | 2026-02-07 | HSV hue ring for color picker | Natural fit for round display |
 | 2026-02-07 | Validate on hardware before Git commit | Ensures repo always has working code |
 | 2026-02-07 | PDP lives in repo (docs/) | Documentation stays with the code |
-| 2026-02-07 | Staged edits for unified control | Compose a look before sending — no half-state flicker |
 | 2026-02-07 | Break Phase 8 into sub-phases | Refinements → Unified UI → Groups/Presets progression |
-| 2026-02-08 | 9-view overlay architecture | Everything visible on one screen, details in overlays |
-| 2026-02-08 | 14 effect categories | Reduces 228 effects to manageable browsing |
-| 2026-02-08 | Stage and send pattern | Batch changes before transmitting, reduces API calls |
-| 2026-02-08 | UDP for group control | Near-instant sync vs sequential HTTP |
 | 2026-02-08 | Design spec + HTML mockup in repo | Visual reference + text blueprint for implementation |
 | 2026-02-08 | Separate PDP from SOP | Prevent operational lessons being lost during PDP rewrites |
+| 2026-02-09 | 3-tier 16-screen navigation | Replaces 9-view overlay — clearer mental model, directional swipe compass |
+| 2026-02-09 | Home as read-only dashboard | Prevents accidental changes from bumps during performance |
+| 2026-02-09 | Home as active target selector | Encoder cycles devices/groups — last shown = edit target for all screens |
+| 2026-02-09 | Live vs Setup mode | Live = instant send, Setup = stage + push atomically |
+| 2026-02-09 | Inactivity timer to Home | 30-60s configurable, safe landing since Home is read-only |
+| 2026-02-09 | Long-press encoder from Home → Settings | Off the swipe compass, prevents accidental entry |
+| 2026-02-09 | Preview = physical 8x8 matrix | On-screen simulation impractical on 240px round display |
+| 2026-02-09 | Preset edit toggle (not separate page) | Same list, mode toggle avoids duplicate UI |
+| 2026-02-09 | 2-column preset layout | More presets visible, smaller items for touch |
+| 2026-02-09 | MIDI pages cycle with swipe | 4 pages × 12 slots = 48 presets, swipe right from Home |
+| 2026-02-09 | Scene Builder placeholder (future) | Swipe left from Home reserved for future feature |
 
 ---
 
@@ -258,6 +333,5 @@ Suggested sub-phases from spec:
 | 1.7 | 2026-02-06 | 7A+7B complete. Mock mode added. |
 | 1.8 | 2026-02-07 | Phase 7 complete. All screens working. GitHub workflow established. |
 | 1.9 | 2026-02-07 | Phase 7 rebuilt after context loss. Phase 8 planned as A/B/C. Git workflow lessons added. |
-| 2.0 | 2026-02-08 | Phase 8A complete. Phase 8B design complete. Separated operational knowledge into SOP.md. Added UNIFIED-CONTROL-SPEC.md and visual mockup. |
-
-
+| 2.0 | 2026-02-08 | Phase 8A complete. Phase 8B design complete (9-view overlay). Separated SOP.md. |
+| 2.1 | 2026-02-09 | Phase 8B redesigned: 3-tier 16-screen navigation replaces overlay model. Home as read-only dashboard + active target selector. Live/Setup modes. Inactivity timer. Settings via long-press. Preview system. Preset management updates. Phase 8 expanded to 8B-8E. |

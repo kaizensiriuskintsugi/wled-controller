@@ -3,845 +3,744 @@
 #include "input.h"
 #include "discovery.h"
 #include "wled_api.h"
+#include "home_ring.h"
 #include <math.h>
-#include <Preferences.h>
 
-// ===== NVS PERSISTENCE =====
-static Preferences prefs;
+// ===== NAVIGATION MAP =====
+struct NavTarget {
+    Screen up;
+    Screen down;
+    Screen left;
+    Screen right;
+};
 
-static void saveLastDevice(const char* name) {
-    prefs.begin("wled-ctrl", false);
-    prefs.putString("lastDev", name);
-    prefs.end();
-}
+#define NAV_NONE SCREEN_COUNT
 
-static String loadLastDevice() {
-    prefs.begin("wled-ctrl", true);
-    String name = prefs.getString("lastDev", "");
-    prefs.end();
-    return name;
-}
+static const NavTarget navMap[SCREEN_COUNT] = {
+    { NAV_NONE, NAV_NONE, NAV_NONE, NAV_NONE },           // BOOT
+    { SCREEN_GROUP_HOTKEYS, SCREEN_FX_DRAWER, SCREEN_SCENES, SCREEN_MIDI_1 }, // HOME
+    { NAV_NONE, SCREEN_GROUP_HOTKEYS, NAV_NONE, NAV_NONE },// DEVICE_LIST
+    { SCREEN_DEVICE_LIST, SCREEN_HOME, SCREEN_MANAGE_GROUPS, SCREEN_GROUP_LIST }, // GROUP_HOTKEYS
+    { NAV_NONE, NAV_NONE, SCREEN_GROUP_HOTKEYS, NAV_NONE },// GROUP_LIST
+    { NAV_NONE, NAV_NONE, NAV_NONE, SCREEN_GROUP_HOTKEYS },// MANAGE_GROUPS
+    { SCREEN_MIDI_3, SCREEN_MIDI_4, SCREEN_HOME, SCREEN_MIDI_2 }, // MIDI_1
+    { NAV_NONE, NAV_NONE, SCREEN_MIDI_1, NAV_NONE },       // MIDI_2
+    { NAV_NONE, SCREEN_MIDI_1, NAV_NONE, NAV_NONE },       // MIDI_3
+    { SCREEN_MIDI_1, NAV_NONE, NAV_NONE, NAV_NONE },       // MIDI_4
+    { NAV_NONE, NAV_NONE, NAV_NONE, SCREEN_HOME },         // SCENES
+    { SCREEN_HOME, SCREEN_PRESETS, SCREEN_FX_FAVORITES, SCREEN_PAL_FAVORITES }, // FX_DRAWER
+    { NAV_NONE, NAV_NONE, SCREEN_FX_CATEGORIES, SCREEN_FX_DRAWER }, // FX_FAVORITES
+    { NAV_NONE, NAV_NONE, SCREEN_FX_LIST, SCREEN_FX_FAVORITES },    // FX_CATEGORIES
+    { NAV_NONE, NAV_NONE, NAV_NONE, SCREEN_FX_CATEGORIES },         // FX_LIST
+    { NAV_NONE, NAV_NONE, SCREEN_FX_DRAWER, SCREEN_PAL_LIST },      // PAL_FAVORITES
+    { NAV_NONE, NAV_NONE, SCREEN_PAL_FAVORITES, NAV_NONE },         // PAL_LIST
+    { SCREEN_FX_DRAWER, NAV_NONE, NAV_NONE, NAV_NONE },             // PRESETS
+    { NAV_NONE, NAV_NONE, NAV_NONE, NAV_NONE },                     // SETTINGS
+    { NAV_NONE, NAV_NONE, NAV_NONE, NAV_NONE },                     // COLOR_PICKER
+};
+
+// ===== SCREEN NAMES =====
+static const char* screenNames[SCREEN_COUNT] = {
+    "BOOT", "HOME", "DEVICE LIST", "GROUP HOT KEYS",
+    "GROUP LIST", "MANAGE GROUPS", "MIDI PG 1", "MIDI PG 2",
+    "MIDI PG 3", "MIDI PG 4", "SCENES (FUTURE)", "EFFECTS DRAWER",
+    "FX FAVORITES", "FX CATEGORIES", "FX LIST", "PAL FAVORITES",
+    "PAL LIST", "PRESETS", "SETTINGS", "COLOR PICKER",
+};
 
 // ===== STATE =====
 static Screen currentScreen = SCREEN_BOOT;
-static int selectedIndex = 0;
-static int scrollOffset = 0;
+static Screen previousScreen = SCREEN_HOME;
 static bool needsRedraw = true;
 
-// Encoder accumulator for list scrolling
-static int encAccum = 0;
-#define ENC_LIST_THRESHOLD 4
-
-// Selected device for control screen
-static WledDevice* activeDevice = nullptr;
-static WledState deviceState = {};
+// Home page state
+static int activeDeviceIndex = 0;
+static WledState activeState = {};
 static unsigned long lastStateRefresh = 0;
-#define STATE_REFRESH_MS 3000
+static const unsigned long STATE_REFRESH_MS = 3000;
 
-// Brightness tracking
-static int pendingBrightness = -1;
-static unsigned long lastBriSend = 0;
-#define BRI_SEND_INTERVAL_MS 100
+// Device list state
+static int devListSel = 0;
+static int devListScroll = 0;
 
-// Display layout
-#define VISIBLE_ITEMS 4
-#define LIST_START_Y 60
-#define LIST_ITEM_HEIGHT 35
-#define LIST_X 120
-
-// Arc settings
-#define ARC_CENTER_Y 115
-#define ARC_RADIUS 95
-#define ARC_THICKNESS 3
-
-// Browser state (shared between effect and palette browsers)
-static int browserIndex = 0;
-static int browserScroll = 0;
-static int browserCount = 0;
-static int browserEncAccum = 0;
-#define BROWSER_VISIBLE 4
-#define BROWSER_START_Y 55
-#define BROWSER_ITEM_H 35
-
-// Color picker state
-static float pickerHue = 0;        // 0-360
-static uint8_t pickerSat = 255;    // 0-255
-static float oldIndicatorAngle = -1;
-#define HUE_RING_OUTER 110
-#define HUE_RING_INNER 85
-#define PREVIEW_RADIUS 35
-
-// ===== CACHED EFFECT/PALETTE COUNTS =====
-// Avoids HTTP round-trip every time you enter a browser
-static int cachedEffectCount = -1;
-static int cachedPaletteCount = -1;
-static char cachedCountsDeviceIp[16] = "";
-
-static int getCachedEffectCount(const char* ip) {
-    if (strcmp(ip, cachedCountsDeviceIp) != 0) {
-        // Different device — invalidate cache
-        cachedEffectCount = -1;
-        cachedPaletteCount = -1;
-        strncpy(cachedCountsDeviceIp, ip, 15);
-        cachedCountsDeviceIp[15] = '\0';
-    }
-    if (cachedEffectCount < 0) {
-        cachedEffectCount = wled_get_effects_count(ip);
-        Serial.printf("[UI] Fetched effect count: %d (cached)\n", cachedEffectCount);
-    }
-    return cachedEffectCount;
-}
-
-static int getCachedPaletteCount(const char* ip) {
-    if (strcmp(ip, cachedCountsDeviceIp) != 0) {
-        cachedEffectCount = -1;
-        cachedPaletteCount = -1;
-        strncpy(cachedCountsDeviceIp, ip, 15);
-        cachedCountsDeviceIp[15] = '\0';
-    }
-    if (cachedPaletteCount < 0) {
-        cachedPaletteCount = wled_get_palettes_count(ip);
-        Serial.printf("[UI] Fetched palette count: %d (cached)\n", cachedPaletteCount);
-    }
-    return cachedPaletteCount;
-}
-
-// ===== EFFECT NAME LOOKUP (50 common WLED effects) =====
-static const char* effectNames[] = {
-    "Solid", "Blink", "Breathe", "Wipe", "Wipe Random",
-    "Random Colors", "Sweep", "Dynamic", "Colorloop", "Rainbow",
-    "Scan", "Scan Dual", "Fade", "Theater", "Theater Rainbow",
-    "Running", "Saw", "Twinkle", "Dissolve", "Dissolve Rnd",
-    "Sparkle", "Sparkle Dark", "Sparkle+", "Strobe", "Strobe Rainbow",
-    "Strobe Mega", "Blink Rainbow", "Android", "Chase", "Chase Random",
-    "Chase Rainbow", "Chase Flash", "Chase Flash Rnd", "Rainbow Runner", "Colorful",
-    "Traffic Light", "Sweep Random", "Chase 2", "Aurora", "Stream",
-    "Scanner", "Lighthouse", "Fireworks", "Rain", "Tetrix",
-    "Fire Flicker", "Gradient", "Loading", "Police", "Fairy"
+// ===== GENERIC BROWSER STATE =====
+struct BrowserState {
+    int sel;
+    int scroll;
+    int count;
 };
-#define EFFECT_NAME_COUNT 50
 
-// ===== PALETTE NAME LOOKUP (50 common WLED palettes) =====
-static const char* paletteNames[] = {
-    "Default", "Random Cycle", "Color 1", "Colors 1&2", "Color Gradient",
-    "Colors Only", "Party", "Cloud", "Lava", "Ocean",
-    "Forest", "Rainbow", "Rainbow Bands", "Sunset", "Rivendell",
-    "Breeze", "Red & Blue", "Yellowout", "Analogous", "Splash",
-    "Pastel", "Sunset 2", "Beach", "Vintage", "Departure",
-    "Landscape", "Beech", "Sherbet", "Hult", "Hult 64",
-    "Drywet", "Jul", "Grintage", "Rewhi", "Tertiary",
-    "Fire", "Icefire", "Cyane", "Light Pink", "Autumn",
-    "Magenta", "Magred", "Yelmag", "Yelblu", "Orange & Teal",
-    "Tiamat", "April Night", "Orangery", "C9", "Sakura"
-};
-#define PALETTE_NAME_COUNT 50
+typedef const char* (*ItemNameFn)(int index);
 
-// ===== HELPERS =====
+// Browser instances
+static BrowserState fxListBrowser = {0, 0, 0};
+static BrowserState palListBrowser = {0, 0, 0};
 
-static void switchScreen(Screen next) {
-    display_clear();
-    currentScreen = next;
-    needsRedraw = true;
-    encAccum = 0;
-    browserEncAccum = 0;
-    Serial.printf("[UI] Screen → %d\n", next);
+// Cached counts (fetched once per device)
+static int cachedEffectCount = 0;
+static int cachedPaletteCount = 0;
+
+// ===== ACTIVE DEVICE HELPERS =====
+
+static void refreshActiveDeviceState() {
+    int count = discovery_get_count();
+    if (count == 0) {
+        activeState.valid = false;
+        return;
+    }
+    if (activeDeviceIndex >= count) activeDeviceIndex = 0;
+    WledDevice* dev = discovery_get_device(activeDeviceIndex);
+    if (dev) {
+        activeState = wled_get_state(dev->ip);
+    } else {
+        activeState.valid = false;
+    }
 }
 
-static void drawArc(int brightness) {
+static void ensureEffectCount() {
+    if (cachedEffectCount > 0) return;
+    WledDevice* dev = discovery_get_device(activeDeviceIndex);
+    if (dev) {
+        int c = wled_get_effects_count(dev->ip);
+        if (c > 0) cachedEffectCount = c;
+    }
+    if (cachedEffectCount == 0) cachedEffectCount = 177;
+}
+
+static void ensurePaletteCount() {
+    if (cachedPaletteCount > 0) return;
+    WledDevice* dev = discovery_get_device(activeDeviceIndex);
+    if (dev) {
+        int c = wled_get_palettes_count(dev->ip);
+        if (c > 0) cachedPaletteCount = c;
+    }
+    if (cachedPaletteCount == 0) cachedPaletteCount = 75;
+}
+
+// ===== DRAWING HELPERS =====
+
+static void drawHBar(int x, int y, int width, const char* label,
+                     int value, int maxVal, uint16_t fillColor) {
     TFT_eSPI& tft = display_get_tft();
-    int arcAngle = map(brightness, 0, 255, 0, 240);
-    int arcStart = 150;
 
-    for (int a = 0; a < 240; a++) {
-        float rad = (arcStart + a) * DEG_TO_RAD;
-        uint16_t color = (a < arcAngle) ? COLOR_ACCENT : COLOR_DIM;
+    tft.setTextDatum(MR_DATUM);
+    tft.setTextColor(COLOR_DIM);
+    tft.drawString(label, x - 4, y, 1);
 
-        for (int r = -ARC_THICKNESS; r <= ARC_THICKNESS; r++) {
-            int x = LIST_X + cos(rad) * (ARC_RADIUS + r);
-            int y = ARC_CENTER_Y + sin(rad) * (ARC_RADIUS + r);
-            tft.drawPixel(x, y, color);
+    int trackH = 6;
+    tft.fillRect(x, y - trackH / 2, width, trackH, 0x1082);
+
+    int fillW = (value * width) / maxVal;
+    if (fillW > 0) {
+        tft.fillRect(x, y - trackH / 2, fillW, trackH, fillColor);
+    }
+
+    tft.setTextDatum(ML_DATUM);
+    tft.setTextColor(COLOR_DIM);
+    char val[8];
+    snprintf(val, sizeof(val), "%d", value);
+    tft.drawString(val, x + width + 4, y, 1);
+}
+
+// ===== GENERIC BROWSER =====
+
+static void drawBrowser(const char* title, uint16_t titleColor,
+                        const char* subtitle, BrowserState& state,
+                        ItemNameFn getName, int highlightId = -1) {
+    TFT_eSPI& tft = display_get_tft();
+    tft.fillScreen(COLOR_BG);
+
+    tft.setTextDatum(TC_DATUM);
+    tft.setTextColor(titleColor);
+    tft.drawString(title, 120, 28, 2);
+
+    if (subtitle) {
+        tft.setTextColor(COLOR_DIM);
+        tft.drawString(subtitle, 120, 46, 1);
+    }
+
+    tft.setTextColor(0x2104);
+    tft.setTextDatum(BC_DATUM);
+    tft.drawString("hold = home", 120, 224, 1);
+
+    if (state.count == 0) {
+        tft.setTextDatum(MC_DATUM);
+        tft.setTextColor(COLOR_DIM);
+        tft.drawString("Empty", 120, 130, 2);
+        return;
+    }
+
+    const int listTop = 60;
+    const int itemH = 24;
+    const int maxVisible = 6;
+    const int listLeft = 36;
+    const int listRight = 204;
+
+    if (state.sel < state.scroll) state.scroll = state.sel;
+    if (state.sel >= state.scroll + maxVisible) state.scroll = state.sel - maxVisible + 1;
+    if (state.scroll < 0) state.scroll = 0;
+
+    int visible = min(maxVisible, state.count);
+
+    for (int i = 0; i < visible; i++) {
+        int idx = state.scroll + i;
+        if (idx >= state.count) break;
+
+        int y = listTop + i * itemH;
+        bool isSel = (idx == state.sel);
+        bool isActive = (idx == highlightId);
+
+        if (isSel) {
+            tft.fillRoundRect(listLeft - 2, y, listRight - listLeft + 4, itemH - 2, 4, 0x2100);
+        }
+
+        if (isActive) {
+            tft.fillCircle(listLeft + 4, y + itemH / 2 - 1, 3, 0x07E0);
+        }
+
+        tft.setTextDatum(MR_DATUM);
+        tft.setTextColor(COLOR_DIM);
+        char numStr[8];
+        snprintf(numStr, sizeof(numStr), "%d", idx);
+        tft.drawString(numStr, listLeft + 22, y + itemH / 2 - 1, 1);
+
+        tft.setTextDatum(ML_DATUM);
+        tft.setTextColor(isSel ? COLOR_ACCENT : 0xAD55);
+        const char* name = getName(idx);
+        tft.drawString(name, listLeft + 26, y + itemH / 2 - 1, 2);
+    }
+
+    if (state.scroll > 0) {
+        tft.setTextDatum(TC_DATUM);
+        tft.setTextColor(COLOR_DIM);
+        tft.drawString("^", 120, 54, 1);
+    }
+    if (state.scroll + maxVisible < state.count) {
+        tft.setTextDatum(BC_DATUM);
+        tft.setTextColor(COLOR_DIM);
+        tft.drawString("v", 120, listTop + visible * itemH + 2, 1);
+    }
+}
+
+static bool handleBrowserInput(BrowserState& state) {
+    int delta = input_encoder_delta();
+    if (delta != 0 && state.count > 0) {
+        state.sel += (delta > 0) ? 1 : -1;
+        if (state.sel >= state.count) state.sel = state.count - 1;
+        if (state.sel < 0) state.sel = 0;
+        needsRedraw = true;
+    }
+
+    if (input_button_pressed()) {
+        if (state.count > 0 && state.sel >= 0 && state.sel < state.count) {
+            return true;
         }
     }
+    return false;
 }
 
-// ===== HSV TO RGB CONVERSION =====
-static void hsvToRgb(float h, uint8_t s, uint8_t v, uint8_t &r, uint8_t &g, uint8_t &b) {
-    float hf = h / 60.0f;
-    int i = (int)hf;
-    float f = hf - i;
-    float sf = s / 255.0f;
-    uint8_t p = v * (1.0f - sf);
-    uint8_t q = v * (1.0f - sf * f);
-    uint8_t t = v * (1.0f - sf * (1.0f - f));
-    switch (i % 6) {
-        case 0: r = v; g = t; b = p; break;
-        case 1: r = q; g = v; b = p; break;
-        case 2: r = p; g = v; b = t; break;
-        case 3: r = p; g = q; b = v; break;
-        case 4: r = t; g = p; b = v; break;
-        case 5: r = v; g = p; b = q; break;
+// ===== HOME PAGE =====
+
+static void drawHome() {
+    TFT_eSPI& tft = display_get_tft();
+
+    tft.pushImage(0, 0, 240, 240, homeRing);
+
+    int devCount = discovery_get_count();
+
+    if (devCount == 0) {
+        tft.setTextDatum(MC_DATUM);
+        tft.setTextColor(COLOR_DIM);
+        tft.drawString("No devices", 120, 110, 4);
+        tft.setTextColor(0x2104);
+        tft.drawString("Scanning...", 120, 140, 2);
+        return;
     }
+
+    if (activeDeviceIndex >= devCount) activeDeviceIndex = 0;
+    WledDevice* dev = discovery_get_device(activeDeviceIndex);
+    if (!dev) return;
+
+    tft.setTextDatum(TC_DATUM);
+    tft.setTextColor(COLOR_ACCENT);
+    tft.drawString(dev->name, 120, 52, 2);
+
+    tft.setTextColor(COLOR_DIM);
+    char counter[16];
+    snprintf(counter, sizeof(counter), "%d / %d", activeDeviceIndex + 1, devCount);
+    tft.drawString(counter, 120, 70, 1);
+
+    if (!activeState.valid) {
+        tft.setTextDatum(MC_DATUM);
+        tft.setTextColor(COLOR_WARN);
+        tft.drawString("Connecting...", 120, 120, 2);
+        return;
+    }
+
+    uint16_t pwrColor = activeState.on ? 0x07E0 : 0xF800;
+    tft.fillCircle(75, 88, 4, pwrColor);
+    tft.setTextDatum(ML_DATUM);
+    tft.setTextColor(COLOR_DIM);
+    tft.drawString(activeState.on ? "ON" : "OFF", 83, 88, 1);
+
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(TFT_WHITE);
+    const char* fxName = wled_get_effect_name(activeState.effectId);
+    tft.drawString(fxName, 120, 108, 2);
+
+    tft.setTextColor(COLOR_DIM);
+    char fxId[16];
+    snprintf(fxId, sizeof(fxId), "FX #%d", activeState.effectId);
+    tft.drawString(fxId, 120, 124, 1);
+
+    tft.setTextColor(COLOR_ACCENT);
+    const char* palName = wled_get_palette_name(activeState.paletteId);
+    tft.drawString(palName, 120, 142, 2);
+
+    tft.setTextColor(COLOR_DIM);
+    char palId[16];
+    snprintf(palId, sizeof(palId), "PAL #%d", activeState.paletteId);
+    tft.drawString(palId, 120, 158, 1);
+
+    drawHBar(64, 178, 80, "BRI", activeState.brightness, 255, 0xFD20);
+
+    tft.setTextDatum(BC_DATUM);
+    tft.setTextColor(0x2104);
+    tft.drawString("hold = settings", 120, 198, 1);
 }
 
-static uint16_t hueToColor565(float h) {
-    uint8_t r, g, b;
-    hsvToRgb(h, 255, 255, r, g, b);
-    return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
-}
-
-// ===== DEVICE LIST SCREEN =====
+// ===== DEVICE LIST =====
 
 static void drawDeviceList() {
     TFT_eSPI& tft = display_get_tft();
     tft.fillScreen(COLOR_BG);
 
-    int count = discovery_get_count();
+    int devCount = discovery_get_count();
 
-    tft.setTextDatum(MC_DATUM);
+    tft.setTextDatum(TC_DATUM);
     tft.setTextColor(COLOR_ACCENT);
-    tft.drawString("WLED Devices", LIST_X, 30, 4);
+    tft.drawString("DEVICES", 120, 28, 2);
 
-    if (count == 0) {
+    tft.setTextColor(COLOR_DIM);
+    char sub[32];
+    snprintf(sub, sizeof(sub), "%d found", devCount);
+    tft.drawString(sub, 120, 46, 1);
+
+    tft.setTextDatum(BC_DATUM);
+    tft.setTextColor(0x2104);
+    tft.drawString("v groups", 120, 224, 1);
+    tft.drawString("hold = home", 120, 212, 1);
+
+    if (devCount == 0) {
+        tft.setTextDatum(MC_DATUM);
         tft.setTextColor(COLOR_DIM);
-        tft.drawString("No devices found", LIST_X, 110, 2);
-        tft.drawString("Check WiFi/network", LIST_X, 135, 2);
-        tft.setTextColor(COLOR_ACCENT);
-        tft.drawString("Swipe up to rescan", LIST_X, 170, 2);
+        tft.drawString("Scanning...", 120, 130, 2);
         return;
     }
 
-    for (int i = 0; i < VISIBLE_ITEMS && (i + scrollOffset) < count; i++) {
-        int deviceIdx = i + scrollOffset;
-        WledDevice* dev = discovery_get_device(deviceIdx);
+    const int listTop = 62;
+    const int itemH = 26;
+    const int maxVisible = 5;
+    const int listLeft = 36;
+    const int listRight = 204;
+
+    if (devListSel < devListScroll) devListScroll = devListSel;
+    if (devListSel >= devListScroll + maxVisible) devListScroll = devListSel - maxVisible + 1;
+    if (devListScroll < 0) devListScroll = 0;
+
+    int visible = min(maxVisible, devCount);
+
+    for (int i = 0; i < visible; i++) {
+        int idx = devListScroll + i;
+        if (idx >= devCount) break;
+
+        WledDevice* dev = discovery_get_device(idx);
         if (!dev) continue;
 
-        int y = LIST_START_Y + (i * LIST_ITEM_HEIGHT);
+        int y = listTop + i * itemH;
+        bool isSel = (idx == devListSel);
+        bool isActive = (idx == activeDeviceIndex);
 
-        if (deviceIdx == selectedIndex) {
-            tft.setTextColor(COLOR_ACCENT);
-            tft.setTextDatum(ML_DATUM);
-            tft.drawString(">", 30, y + 12, 2);
-            tft.setTextDatum(MC_DATUM);
-            tft.drawString(dev->name, LIST_X, y + 12, 4);
-        } else {
-            tft.setTextColor(COLOR_TEXT);
-            tft.setTextDatum(MC_DATUM);
-            tft.drawString(dev->name, LIST_X, y + 12, 2);
+        if (isSel) {
+            tft.fillRoundRect(listLeft - 2, y - 1, listRight - listLeft + 4, itemH - 2, 4, 0x2100);
+        }
+
+        if (isActive) {
+            tft.fillCircle(listLeft + 4, y + itemH / 2 - 2, 3, 0x07E0);
+        }
+
+        tft.setTextDatum(ML_DATUM);
+        tft.setTextColor(isSel ? COLOR_ACCENT : 0xAD55);
+        tft.drawString(dev->name, listLeft + 14, y + itemH / 2 - 2, 2);
+
+        const char* ip = dev->ip;
+        const char* lastDot = strrchr(ip, '.');
+        if (lastDot) {
+            tft.setTextDatum(MR_DATUM);
+            tft.setTextColor(COLOR_DIM);
+            tft.drawString(lastDot, listRight, y + itemH / 2 - 2, 1);
         }
     }
 
-    // Footer with count and rescan hint
+    if (devListScroll > 0) {
+        tft.setTextDatum(TC_DATUM);
+        tft.setTextColor(COLOR_DIM);
+        tft.drawString("^", 120, 56, 1);
+    }
+    if (devListScroll + maxVisible < devCount) {
+        tft.setTextDatum(BC_DATUM);
+        tft.setTextColor(COLOR_DIM);
+        tft.drawString("v", 120, listTop + visible * itemH + 4, 1);
+    }
+}
+
+// ===== EFFECTS DRAWER =====
+
+static void drawFxDrawer() {
+    TFT_eSPI& tft = display_get_tft();
+    tft.fillScreen(COLOR_BG);
+
+    tft.setTextDatum(TC_DATUM);
+    tft.setTextColor(COLOR_ACCENT);
+    tft.drawString("EFFECTS", 120, 24, 2);
+
+    tft.setTextColor(0x2104);
+    tft.setTextDatum(TC_DATUM);
+    tft.drawString("^ home", 120, 10, 1);
+    tft.setTextDatum(BC_DATUM);
+    tft.drawString("v presets", 120, 230, 1);
+
+    tft.setTextDatum(ML_DATUM);
+    tft.setTextColor(0x2104);
+    tft.drawString("< fav", 10, 120, 1);
+    tft.setTextDatum(MR_DATUM);
+    tft.drawString("pal >", 230, 120, 1);
+
+    if (!activeState.valid) {
+        tft.setTextDatum(MC_DATUM);
+        tft.setTextColor(COLOR_DIM);
+        tft.drawString("No device", 120, 120, 2);
+        return;
+    }
+
+    tft.setTextDatum(ML_DATUM);
     tft.setTextColor(COLOR_DIM);
+    tft.drawString("Effect", 44, 54, 1);
+
     tft.setTextDatum(MC_DATUM);
-    String footer = String(count) + " devices | swipe up: rescan";
-    tft.drawString(footer, LIST_X, 220, 2);
+    tft.setTextColor(TFT_WHITE);
+    const char* fxName = wled_get_effect_name(activeState.effectId);
+    tft.drawString(fxName, 120, 72, 2);
+
+    tft.setTextColor(COLOR_DIM);
+    char fxId[16];
+    snprintf(fxId, sizeof(fxId), "#%d", activeState.effectId);
+    tft.drawString(fxId, 120, 90, 1);
+
+    tft.setTextDatum(ML_DATUM);
+    tft.setTextColor(COLOR_DIM);
+    tft.drawString("Palette", 44, 110, 1);
+
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(COLOR_ACCENT);
+    const char* palName = wled_get_palette_name(activeState.paletteId);
+    tft.drawString(palName, 120, 128, 2);
+
+    tft.setTextColor(COLOR_DIM);
+    char palId[16];
+    snprintf(palId, sizeof(palId), "#%d", activeState.paletteId);
+    tft.drawString(palId, 120, 146, 1);
+
+    tft.setTextDatum(ML_DATUM);
+    tft.setTextColor(COLOR_DIM);
+    tft.drawString("Brightness", 44, 168, 1);
+    drawHBar(54, 184, 100, "", activeState.brightness, 255, 0xFD20);
+
+    tft.setTextDatum(BC_DATUM);
+    tft.setTextColor(0x2104);
+    tft.drawString("encoder = brightness", 120, 214, 1);
+}
+
+static void handleFxDrawerInput() {
+    int delta = input_encoder_delta();
+    if (delta != 0 && activeState.valid) {
+        int newBri = activeState.brightness + delta * 5;
+        if (newBri > 255) newBri = 255;
+        if (newBri < 0) newBri = 0;
+        activeState.brightness = newBri;
+
+        WledDevice* dev = discovery_get_device(activeDeviceIndex);
+        if (dev) {
+            wled_set_brightness(dev->ip, newBri);
+        }
+        needsRedraw = true;
+    }
+    input_button_pressed();
+}
+
+// ===== FX LIST =====
+
+static void drawFxList() {
+    char subtitle[32];
+    snprintf(subtitle, sizeof(subtitle), "%d effects", fxListBrowser.count);
+    drawBrowser("ALL EFFECTS", COLOR_ACCENT, subtitle,
+                fxListBrowser, wled_get_effect_name, activeState.effectId);
+}
+
+static void handleFxListInput() {
+    if (handleBrowserInput(fxListBrowser)) {
+        WledDevice* dev = discovery_get_device(activeDeviceIndex);
+        if (dev) {
+            wled_set_effect(dev->ip, fxListBrowser.sel);
+            activeState.effectId = fxListBrowser.sel;
+            Serial.printf("[UI] Effect set: %d %s\n", fxListBrowser.sel,
+                          wled_get_effect_name(fxListBrowser.sel));
+            needsRedraw = true;
+        }
+    }
+}
+
+// ===== PALETTE LIST =====
+
+static void drawPalList() {
+    char subtitle[32];
+    snprintf(subtitle, sizeof(subtitle), "%d palettes", palListBrowser.count);
+    drawBrowser("ALL PALETTES", 0xA01F, subtitle,
+                palListBrowser, wled_get_palette_name, activeState.paletteId);
+}
+
+static void handlePalListInput() {
+    if (handleBrowserInput(palListBrowser)) {
+        WledDevice* dev = discovery_get_device(activeDeviceIndex);
+        if (dev) {
+            wled_set_palette(dev->ip, palListBrowser.sel);
+            activeState.paletteId = palListBrowser.sel;
+            Serial.printf("[UI] Palette set: %d %s\n", palListBrowser.sel,
+                          wled_get_palette_name(palListBrowser.sel));
+            needsRedraw = true;
+        }
+    }
+}
+
+// ===== PLACEHOLDER =====
+
+static void drawPlaceholder() {
+    TFT_eSPI& tft = display_get_tft();
+    tft.fillScreen(COLOR_BG);
+
+    const NavTarget& nav = navMap[currentScreen];
+
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(COLOR_ACCENT);
+    tft.drawString(screenNames[currentScreen], 120, 120, 4);
+
+    tft.setTextColor(COLOR_DIM);
+    if (nav.up < SCREEN_COUNT) {
+        tft.setTextDatum(TC_DATUM);
+        String hint = String("^ ") + screenNames[nav.up];
+        tft.drawString(hint, 120, 30, 2);
+    }
+    if (nav.down < SCREEN_COUNT) {
+        tft.setTextDatum(BC_DATUM);
+        String hint = String("v ") + screenNames[nav.down];
+        tft.drawString(hint, 120, 215, 2);
+    }
+    if (nav.left < SCREEN_COUNT) {
+        tft.setTextDatum(ML_DATUM);
+        tft.drawString("<", 15, 120, 2);
+    }
+    if (nav.right < SCREEN_COUNT) {
+        tft.setTextDatum(MR_DATUM);
+        tft.drawString(">", 225, 120, 2);
+    }
+
+    if (currentScreen == SCREEN_SETTINGS || currentScreen == SCREEN_COLOR_PICKER) {
+        tft.setTextDatum(BC_DATUM);
+        tft.setTextColor(COLOR_WARN);
+        tft.drawString("swipe down = back", 120, 195, 2);
+    } else {
+        tft.setTextDatum(BC_DATUM);
+        tft.setTextColor(0x3186);
+        tft.drawString("long press = home", 120, 195, 2);
+    }
+}
+
+// ===== INPUT ROUTING =====
+
+static void switchScreen(Screen next) {
+    if (next >= SCREEN_COUNT) return;
+    if (next == currentScreen) return;
+
+    previousScreen = currentScreen;
+    display_clear();
+    currentScreen = next;
+    needsRedraw = true;
+
+    // Screen entry setup
+    if (next == SCREEN_DEVICE_LIST) {
+        devListSel = activeDeviceIndex;
+        devListScroll = max(0, devListSel - 2);
+    }
+    if (next == SCREEN_FX_LIST) {
+        ensureEffectCount();
+        fxListBrowser.count = cachedEffectCount;
+        fxListBrowser.sel = activeState.effectId;
+        fxListBrowser.scroll = max(0, fxListBrowser.sel - 2);
+    }
+    if (next == SCREEN_PAL_LIST) {
+        ensurePaletteCount();
+        palListBrowser.count = cachedPaletteCount;
+        palListBrowser.sel = activeState.paletteId;
+        palListBrowser.scroll = max(0, palListBrowser.sel - 2);
+    }
+
+    Serial.printf("[UI] %s -> %s\n", screenNames[previousScreen], screenNames[currentScreen]);
+}
+
+static void handleNavInput() {
+    Gesture g = input_gesture();
+    const NavTarget& nav = navMap[currentScreen];
+
+    switch (g) {
+        case GESTURE_SWIPE_UP:
+            if (nav.down < SCREEN_COUNT) switchScreen(nav.down);
+            break;
+        case GESTURE_SWIPE_DOWN:
+            if (currentScreen == SCREEN_SETTINGS || currentScreen == SCREEN_COLOR_PICKER) {
+                switchScreen(previousScreen);
+            } else if (nav.up < SCREEN_COUNT) {
+                switchScreen(nav.up);
+            }
+            break;
+        case GESTURE_SWIPE_LEFT:
+            if (nav.right < SCREEN_COUNT) switchScreen(nav.right);
+            break;
+        case GESTURE_SWIPE_RIGHT:
+            if (nav.left < SCREEN_COUNT) switchScreen(nav.left);
+            break;
+        default:
+            break;
+    }
+
+    if (input_button_long_pressed()) {
+        if (currentScreen == SCREEN_HOME) {
+            switchScreen(SCREEN_SETTINGS);
+        } else {
+            switchScreen(SCREEN_HOME);
+        }
+    }
+}
+
+static void handleHomeInput() {
+    int delta = input_encoder_delta();
+    if (delta != 0) {
+        int count = discovery_get_count();
+        if (count > 0) {
+            activeDeviceIndex += (delta > 0) ? 1 : -1;
+            if (activeDeviceIndex >= count) activeDeviceIndex = 0;
+            if (activeDeviceIndex < 0) activeDeviceIndex = count - 1;
+            refreshActiveDeviceState();
+            cachedEffectCount = 0;
+            cachedPaletteCount = 0;
+            needsRedraw = true;
+            lastStateRefresh = millis();
+            Serial.printf("[UI] Home: device %d/%d\n", activeDeviceIndex + 1, count);
+        }
+    }
+    input_button_pressed();
 }
 
 static void handleDeviceListInput() {
-    int count = discovery_get_count();
-
-    // Swipe up = rescan (works even with 0 devices)
-    Gesture g = input_gesture();
-    if (g == GESTURE_SWIPE_UP) {
-        Serial.println("[UI] Rescan triggered");
-        display_clear();
-        TFT_eSPI& tft = display_get_tft();
-        tft.setTextDatum(MC_DATUM);
-        tft.setTextColor(COLOR_ACCENT);
-        tft.drawString("Scanning...", LIST_X, 120, 4);
-
-        discovery_scan();
-
-        // Reset selection
-        selectedIndex = 0;
-        scrollOffset = 0;
-        // Invalidate cached counts (devices may have changed)
-        cachedEffectCount = -1;
-        cachedPaletteCount = -1;
-        cachedCountsDeviceIp[0] = '\0';
-
-        needsRedraw = true;
-        return;
-    }
-
-    if (count == 0) return;
+    int devCount = discovery_get_count();
 
     int delta = input_encoder_delta();
-    if (delta != 0) {
-        encAccum += delta;
-
-        int move = 0;
-        if (encAccum >= ENC_LIST_THRESHOLD) {
-            move = 1;
-            encAccum = 0;
-        } else if (encAccum <= -ENC_LIST_THRESHOLD) {
-            move = -1;
-            encAccum = 0;
-        }
-
-        if (move != 0) {
-            selectedIndex += move;
-            if (selectedIndex < 0) selectedIndex = 0;
-            if (selectedIndex >= count) selectedIndex = count - 1;
-
-            if (selectedIndex < scrollOffset) {
-                scrollOffset = selectedIndex;
-            }
-            if (selectedIndex >= scrollOffset + VISIBLE_ITEMS) {
-                scrollOffset = selectedIndex - VISIBLE_ITEMS + 1;
-            }
-            needsRedraw = true;
-        }
+    if (delta != 0 && devCount > 0) {
+        devListSel += (delta > 0) ? 1 : -1;
+        if (devListSel >= devCount) devListSel = devCount - 1;
+        if (devListSel < 0) devListSel = 0;
+        needsRedraw = true;
     }
 
-    bool select = false;
-    if (input_button_pressed()) select = true;
-    if (g == GESTURE_TAP) select = true;
-
-    if (select) {
-        activeDevice = discovery_get_device(selectedIndex);
-        Serial.printf("[UI] Selected: %s (%s)\n", activeDevice->name, activeDevice->ip);
-
-        // Save to NVS for smart boot next time
-        saveLastDevice(activeDevice->name);
-
-        deviceState = wled_get_state(activeDevice->ip);
-        if (!deviceState.valid) {
-            Serial.println("[UI] Warning: device not responding");
-        }
-        pendingBrightness = deviceState.brightness;
-        lastStateRefresh = millis();
-
-        switchScreen(SCREEN_DEVICE_CONTROL);
-    }
-}
-
-// ===== DEVICE CONTROL SCREEN =====
-
-static void drawDeviceControl() {
-    TFT_eSPI& tft = display_get_tft();
-    tft.fillScreen(COLOR_BG);
-
-    if (!activeDevice) {
-        tft.setTextDatum(MC_DATUM);
-        tft.setTextColor(COLOR_ERROR);
-        tft.drawString("No device", LIST_X, 120, 4);
-        return;
-    }
-
-    if (!deviceState.valid) {
-        // Device unreachable
-        tft.setTextDatum(MC_DATUM);
-        tft.setTextColor(COLOR_ERROR);
-        tft.drawString("Connection lost", LIST_X, 90, 4);
-        tft.setTextColor(COLOR_ACCENT);
-        tft.drawString(activeDevice->name, LIST_X, 130, 2);
-        tft.setTextColor(COLOR_DIM);
-        tft.drawString("Retrying...", LIST_X, 160, 2);
-        tft.drawString("Swipe down: back", LIST_X, 185, 2);
-        return;
-    }
-
-    // Device name
-    tft.setTextDatum(MC_DATUM);
-    tft.setTextColor(COLOR_ACCENT);
-    tft.drawString(activeDevice->name, LIST_X, 25, 2);
-
-    // Power indicator
-    tft.setTextColor(deviceState.on ? COLOR_SUCCESS : COLOR_ERROR);
-    tft.drawString(deviceState.on ? "ON" : "OFF", LIST_X, 45, 2);
-
-    // Brightness — big number
-    int bri = (pendingBrightness >= 0) ? pendingBrightness : deviceState.brightness;
-    tft.setTextColor(COLOR_TEXT);
-    tft.setTextDatum(MC_DATUM);
-    tft.drawString(String(bri), LIST_X, 100, 7);
-
-    // Brightness arc
-    drawArc(bri);
-
-    // Effect name (or ID if beyond lookup table)
-    tft.setTextColor(COLOR_DIM);
-    tft.setTextDatum(MC_DATUM);
-    if (deviceState.effectId < EFFECT_NAME_COUNT) {
-        tft.drawString("FX: " + String(effectNames[deviceState.effectId]), LIST_X, 185, 2);
-    } else {
-        tft.drawString("FX: #" + String(deviceState.effectId), LIST_X, 185, 2);
-    }
-    if (deviceState.paletteId < PALETTE_NAME_COUNT) {
-        tft.drawString("PAL: " + String(paletteNames[deviceState.paletteId]), LIST_X, 200, 2);
-    } else {
-        tft.drawString("PAL: #" + String(deviceState.paletteId), LIST_X, 200, 2);
-    }
-}
-
-static void drawBrightnessOnly() {
-    TFT_eSPI& tft = display_get_tft();
-
-    int bri = (pendingBrightness >= 0) ? pendingBrightness : deviceState.brightness;
-
-    tft.fillRect(20, 70, 200, 60, COLOR_BG);
-    tft.setTextColor(COLOR_TEXT);
-    tft.setTextDatum(MC_DATUM);
-    tft.drawString(String(bri), LIST_X, 100, 7);
-
-    drawArc(bri);
-}
-
-static void handleDeviceControlInput() {
-    if (!activeDevice) return;
-
-    // Always allow swipe down to go back, even if device is unreachable
-    Gesture g = input_gesture();
-    if (g == GESTURE_SWIPE_DOWN) {
-        Serial.println("[UI] Swipe down — back to list");
-        pendingBrightness = -1;
-        switchScreen(SCREEN_DEVICE_LIST);
-        return;
-    }
-
-    // If device not responding, just keep retrying on refresh interval
-    if (!deviceState.valid) {
-        if (millis() - lastStateRefresh > STATE_REFRESH_MS) {
-            Serial.println("[UI] Retrying device connection...");
-            deviceState = wled_get_state(activeDevice->ip);
+    if (input_button_pressed()) {
+        if (devCount > 0 && devListSel >= 0 && devListSel < devCount) {
+            activeDeviceIndex = devListSel;
+            refreshActiveDeviceState();
+            cachedEffectCount = 0;
+            cachedPaletteCount = 0;
             lastStateRefresh = millis();
-            needsRedraw = true;
+            Serial.printf("[UI] Device selected: %d\n", activeDeviceIndex);
+            switchScreen(SCREEN_HOME);
         }
-        return;
-    }
-
-    // Encoder = brightness
-    int delta = input_encoder_delta();
-    if (delta != 0) {
-        if (pendingBrightness < 0) pendingBrightness = deviceState.brightness;
-        pendingBrightness += delta * 2;
-        if (pendingBrightness < 0) pendingBrightness = 0;
-        if (pendingBrightness > 255) pendingBrightness = 255;
-
-        drawBrightnessOnly();
-
-        if (millis() - lastBriSend > BRI_SEND_INTERVAL_MS) {
-            wled_set_brightness(activeDevice->ip, pendingBrightness);
-            lastBriSend = millis();
-        }
-    }
-
-    // Encoder short press = effect browser (uses cached count)
-    if (input_button_pressed()) {
-        Serial.println("[UI] Button — entering effect browser");
-        browserCount = getCachedEffectCount(activeDevice->ip);
-        if (browserCount <= 0) browserCount = EFFECT_NAME_COUNT;
-        browserIndex = deviceState.effectId;
-        browserScroll = max(0, browserIndex - 1);
-        switchScreen(SCREEN_EFFECT_BROWSER);
-        return;
-    }
-
-    // Encoder long press = identify device
-    if (input_button_long_pressed()) {
-        Serial.println("[UI] Encoder long press — identify device");
-        uint8_t origBri = deviceState.brightness;
-        wled_set_brightness(activeDevice->ip, 255);
-        delay(300);
-        wled_set_brightness(activeDevice->ip, 0);
-        delay(300);
-        wled_set_brightness(activeDevice->ip, 255);
-        delay(300);
-        wled_set_brightness(activeDevice->ip, origBri);
-        needsRedraw = true;
-    }
-
-    // Remaining gestures (g was already consumed above for SWIPE_DOWN)
-    // Need to check again since gesture is consume-on-read
-    if (g == GESTURE_SWIPE_UP) {
-        Serial.println("[UI] Swipe up — toggle power");
-        deviceState.on = !deviceState.on;
-        wled_set_power(activeDevice->ip, deviceState.on);
-        needsRedraw = true;
-        return;
-    }
-    if (g == GESTURE_SWIPE_LEFT) {
-        Serial.println("[UI] Swipe left — palette browser");
-        browserCount = getCachedPaletteCount(activeDevice->ip);
-        if (browserCount <= 0) browserCount = PALETTE_NAME_COUNT;
-        browserIndex = deviceState.paletteId;
-        browserScroll = max(0, browserIndex - 1);
-        switchScreen(SCREEN_PALETTE_BROWSER);
-        return;
-    }
-    if (g == GESTURE_SWIPE_RIGHT) {
-        Serial.println("[UI] Swipe right — color picker");
-        pickerHue = 0;
-        pickerSat = 255;
-        oldIndicatorAngle = -1;
-        switchScreen(SCREEN_COLOR_PICKER);
-        return;
-    }
-    if (g == GESTURE_LONG_PRESS) {
-        Serial.println("[UI] Touch long press — identify device");
-        uint8_t origBri = deviceState.brightness;
-        wled_set_brightness(activeDevice->ip, 255);
-        delay(300);
-        wled_set_brightness(activeDevice->ip, 0);
-        delay(300);
-        wled_set_brightness(activeDevice->ip, 255);
-        delay(300);
-        wled_set_brightness(activeDevice->ip, origBri);
-        needsRedraw = true;
-    }
-
-    // Periodic state refresh
-    if (millis() - lastStateRefresh > STATE_REFRESH_MS) {
-        deviceState = wled_get_state(activeDevice->ip);
-        lastStateRefresh = millis();
-        if (!deviceState.valid) {
-            Serial.println("[UI] Device became unreachable");
-            needsRedraw = true;
-        } else if (pendingBrightness < 0) {
-            needsRedraw = true;
-        }
-    }
-}
-
-// ===== GENERIC BROWSER (shared by effect + palette) =====
-
-static void drawBrowserList(const char* title, const char** names, int nameCount, int activeId) {
-    TFT_eSPI& tft = display_get_tft();
-    tft.fillScreen(COLOR_BG);
-
-    tft.setTextDatum(MC_DATUM);
-    tft.setTextColor(COLOR_ACCENT);
-    tft.drawString(title, LIST_X, 25, 4);
-
-    for (int i = 0; i < BROWSER_VISIBLE && (i + browserScroll) < browserCount; i++) {
-        int idx = i + browserScroll;
-        int y = BROWSER_START_Y + (i * BROWSER_ITEM_H);
-
-        const char* name;
-        char fallback[16];
-        if (idx < nameCount) {
-            name = names[idx];
-        } else {
-            snprintf(fallback, sizeof(fallback), "#%d", idx);
-            name = fallback;
-        }
-
-        if (idx == browserIndex) {
-            tft.setTextColor(COLOR_ACCENT);
-            tft.setTextDatum(ML_DATUM);
-            tft.drawString(">", 25, y + 12, 2);
-            tft.setTextDatum(MC_DATUM);
-            tft.drawString(name, LIST_X, y + 12, 4);
-        } else if (idx == activeId) {
-            tft.setTextColor(COLOR_SUCCESS);
-            tft.setTextDatum(MC_DATUM);
-            tft.drawString(name, LIST_X, y + 12, 2);
-        } else {
-            tft.setTextColor(COLOR_TEXT);
-            tft.setTextDatum(MC_DATUM);
-            tft.drawString(name, LIST_X, y + 12, 2);
-        }
-    }
-
-    tft.setTextColor(COLOR_DIM);
-    tft.setTextDatum(MC_DATUM);
-    String pos = String(browserIndex + 1) + "/" + String(browserCount);
-    tft.drawString(pos, LIST_X, 220, 2);
-}
-
-static bool handleBrowserInput(int &selectedId) {
-    int delta = input_encoder_delta();
-    if (delta != 0) {
-        browserEncAccum += delta;
-
-        int move = 0;
-        if (browserEncAccum >= ENC_LIST_THRESHOLD) {
-            move = 1;
-            browserEncAccum = 0;
-        } else if (browserEncAccum <= -ENC_LIST_THRESHOLD) {
-            move = -1;
-            browserEncAccum = 0;
-        }
-
-        if (move != 0) {
-            browserIndex += move;
-            if (browserIndex < 0) browserIndex = 0;
-            if (browserIndex >= browserCount) browserIndex = browserCount - 1;
-
-            if (browserIndex < browserScroll) {
-                browserScroll = browserIndex;
-            }
-            if (browserIndex >= browserScroll + BROWSER_VISIBLE) {
-                browserScroll = browserIndex - BROWSER_VISIBLE + 1;
-            }
-            needsRedraw = true;
-        }
-    }
-
-    if (input_button_pressed()) {
-        selectedId = browserIndex;
-        return true;
-    }
-
-    Gesture g = input_gesture();
-    if (g == GESTURE_SWIPE_DOWN) {
-        selectedId = -1;
-        return true;
-    }
-
-    return false;
-}
-
-// ===== EFFECT BROWSER SCREEN =====
-
-static void drawEffectBrowser() {
-    drawBrowserList("Effects", effectNames, EFFECT_NAME_COUNT, deviceState.effectId);
-}
-
-static void handleEffectBrowserInput() {
-    int selectedId = -1;
-    if (handleBrowserInput(selectedId)) {
-        if (selectedId >= 0 && activeDevice) {
-            Serial.printf("[UI] Apply effect %d\n", selectedId);
-            wled_set_effect(activeDevice->ip, selectedId);
-            deviceState.effectId = selectedId;
-        } else {
-            Serial.println("[UI] Effect browser cancelled");
-        }
-        switchScreen(SCREEN_DEVICE_CONTROL);
-        deviceState = wled_get_state(activeDevice->ip);
-        pendingBrightness = deviceState.brightness;
-        lastStateRefresh = millis();
-    }
-}
-
-// ===== PALETTE BROWSER SCREEN =====
-
-static void drawPaletteBrowser() {
-    drawBrowserList("Palettes", paletteNames, PALETTE_NAME_COUNT, deviceState.paletteId);
-}
-
-static void handlePaletteBrowserInput() {
-    int selectedId = -1;
-    if (handleBrowserInput(selectedId)) {
-        if (selectedId >= 0 && activeDevice) {
-            Serial.printf("[UI] Apply palette %d\n", selectedId);
-            wled_set_palette(activeDevice->ip, selectedId);
-            deviceState.paletteId = selectedId;
-        } else {
-            Serial.println("[UI] Palette browser cancelled");
-        }
-        switchScreen(SCREEN_DEVICE_CONTROL);
-        deviceState = wled_get_state(activeDevice->ip);
-        pendingBrightness = deviceState.brightness;
-        lastStateRefresh = millis();
-    }
-}
-
-// ===== COLOR PICKER SCREEN =====
-
-static void drawHueRing() {
-    TFT_eSPI& tft = display_get_tft();
-
-    for (int y = 0; y < SCREEN_HEIGHT; y++) {
-        for (int x = 0; x < SCREEN_WIDTH; x++) {
-            int dx = x - LIST_X;
-            int dy = y - LIST_X;
-            float dist = sqrt(dx * dx + dy * dy);
-
-            if (dist >= HUE_RING_INNER && dist <= HUE_RING_OUTER) {
-                float angle = atan2(dy, dx) * RAD_TO_DEG;
-                if (angle < 0) angle += 360;
-                tft.drawPixel(x, y, hueToColor565(angle));
-            }
-        }
-    }
-}
-
-static void drawIndicatorDot(float hue, uint16_t color) {
-    TFT_eSPI& tft = display_get_tft();
-    float rad = hue * DEG_TO_RAD;
-    float midR = (HUE_RING_INNER + HUE_RING_OUTER) / 2.0f;
-    int ix = LIST_X + cos(rad) * midR;
-    int iy = LIST_X + sin(rad) * midR;
-    tft.fillCircle(ix, iy, 5, color);
-}
-
-static void drawColorPicker() {
-    TFT_eSPI& tft = display_get_tft();
-    tft.fillScreen(COLOR_BG);
-
-    tft.setTextDatum(MC_DATUM);
-    tft.setTextColor(COLOR_ACCENT);
-    tft.drawString("Color", LIST_X, 15, 2);
-
-    drawHueRing();
-
-    uint8_t r, g, b;
-    hsvToRgb(pickerHue, pickerSat, 255, r, g, b);
-    uint16_t previewColor = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
-    tft.fillCircle(LIST_X, LIST_X, PREVIEW_RADIUS, previewColor);
-
-    tft.setTextDatum(MC_DATUM);
-    tft.setTextColor(COLOR_DIM);
-    tft.drawString("SAT: " + String(pickerSat), LIST_X, 215, 2);
-
-    drawIndicatorDot(pickerHue, COLOR_TEXT);
-    oldIndicatorAngle = pickerHue;
-}
-
-static void handleColorPickerInput() {
-    TFT_eSPI& tft = display_get_tft();
-    bool previewChanged = false;
-
-    int delta = input_encoder_delta();
-    if (delta != 0) {
-        int newSat = (int)pickerSat + delta * 8;
-        if (newSat < 0) newSat = 0;
-        if (newSat > 255) newSat = 255;
-        pickerSat = (uint8_t)newSat;
-        previewChanged = true;
-
-        tft.fillRect(60, 207, 120, 20, COLOR_BG);
-        tft.setTextDatum(MC_DATUM);
-        tft.setTextColor(COLOR_DIM);
-        tft.drawString("SAT: " + String(pickerSat), LIST_X, 215, 2);
-    }
-
-    if (input_touch_active()) {
-        int tx = input_touch_x();
-        int ty = input_touch_y();
-        int dx = tx - LIST_X;
-        int dy = ty - LIST_X;
-        float dist = sqrt(dx * dx + dy * dy);
-
-        if (dist >= HUE_RING_INNER - 10 && dist <= HUE_RING_OUTER + 10) {
-            float angle = atan2(dy, dx) * RAD_TO_DEG;
-            if (angle < 0) angle += 360;
-
-            float diff = fabs(angle - pickerHue);
-            if (diff > 3 && diff < 357) {
-                if (oldIndicatorAngle >= 0) {
-                    drawIndicatorDot(oldIndicatorAngle, hueToColor565(oldIndicatorAngle));
-                }
-
-                pickerHue = angle;
-                previewChanged = true;
-
-                drawIndicatorDot(pickerHue, COLOR_TEXT);
-                oldIndicatorAngle = pickerHue;
-            }
-        }
-    }
-
-    if (previewChanged) {
-        uint8_t r, g, b;
-        hsvToRgb(pickerHue, pickerSat, 255, r, g, b);
-        uint16_t previewColor = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
-        tft.fillCircle(LIST_X, LIST_X, PREVIEW_RADIUS, previewColor);
-    }
-
-    if (input_button_pressed()) {
-        uint8_t r, g, b;
-        hsvToRgb(pickerHue, pickerSat, 255, r, g, b);
-        Serial.printf("[UI] Apply color R%d G%d B%d\n", r, g, b);
-        if (activeDevice) {
-            wled_set_color(activeDevice->ip, r, g, b);
-        }
-        switchScreen(SCREEN_DEVICE_CONTROL);
-        deviceState = wled_get_state(activeDevice->ip);
-        pendingBrightness = deviceState.brightness;
-        lastStateRefresh = millis();
-        return;
-    }
-
-    Gesture g = input_gesture();
-    if (g == GESTURE_SWIPE_DOWN) {
-        Serial.println("[UI] Color picker cancelled");
-        switchScreen(SCREEN_DEVICE_CONTROL);
-        deviceState = wled_get_state(activeDevice->ip);
-        pendingBrightness = deviceState.brightness;
-        lastStateRefresh = millis();
-        return;
     }
 }
 
 // ===== PUBLIC FUNCTIONS =====
 
 void ui_init() {
-    // Smart boot: try to reconnect to last used device
-    String lastDev = loadLastDevice();
-    if (lastDev.length() > 0) {
-        Serial.printf("[UI] Last device from NVS: %s\n", lastDev.c_str());
-        int count = discovery_get_count();
-        for (int i = 0; i < count; i++) {
-            WledDevice* dev = discovery_get_device(i);
-            if (dev && String(dev->name) == lastDev) {
-                activeDevice = dev;
-                selectedIndex = i;
-                deviceState = wled_get_state(activeDevice->ip);
-                pendingBrightness = deviceState.brightness;
-                lastStateRefresh = millis();
-                currentScreen = SCREEN_DEVICE_CONTROL;
-                needsRedraw = true;
-                Serial.printf("[UI] Auto-connected to %s\n", dev->name);
-                return;
-            }
-        }
-        Serial.printf("[UI] Last device '%s' not found on network\n", lastDev.c_str());
-    }
-
-    // Default: show device list
-    currentScreen = SCREEN_DEVICE_LIST;
-    selectedIndex = 0;
-    scrollOffset = 0;
-    encAccum = 0;
+    currentScreen = SCREEN_HOME;
+    previousScreen = SCREEN_HOME;
     needsRedraw = true;
-    Serial.println("[UI] Initialized — Device List");
+    refreshActiveDeviceState();
+    lastStateRefresh = millis();
+    Serial.println("[UI] Initialized — 8B Navigation (16 screens)");
 }
 
 void ui_update() {
-    // Pass 1: Handle input for current screen
+    handleNavInput();
+
     switch (currentScreen) {
+        case SCREEN_HOME:
+            handleHomeInput();
+            break;
         case SCREEN_DEVICE_LIST:
             handleDeviceListInput();
             break;
-        case SCREEN_DEVICE_CONTROL:
-            handleDeviceControlInput();
+        case SCREEN_FX_DRAWER:
+            handleFxDrawerInput();
             break;
-        case SCREEN_EFFECT_BROWSER:
-            handleEffectBrowserInput();
+        case SCREEN_FX_LIST:
+            handleFxListInput();
             break;
-        case SCREEN_PALETTE_BROWSER:
-            handlePaletteBrowserInput();
-            break;
-        case SCREEN_COLOR_PICKER:
-            handleColorPickerInput();
+        case SCREEN_PAL_LIST:
+            handlePalListInput();
             break;
         default:
+            input_button_pressed();
+            input_encoder_delta();
             break;
     }
 
-    // Pass 2: Draw current screen (may have changed during input)
+    if (currentScreen == SCREEN_HOME) {
+        unsigned long now = millis();
+        if (now - lastStateRefresh >= STATE_REFRESH_MS) {
+            WledState oldState = activeState;
+            refreshActiveDeviceState();
+            lastStateRefresh = now;
+            if (memcmp(&oldState, &activeState, sizeof(WledState)) != 0) {
+                needsRedraw = true;
+            }
+        }
+    }
+
     if (needsRedraw) {
         switch (currentScreen) {
+            case SCREEN_HOME:
+                drawHome();
+                break;
             case SCREEN_DEVICE_LIST:
                 drawDeviceList();
                 break;
-            case SCREEN_DEVICE_CONTROL:
-                drawDeviceControl();
+            case SCREEN_FX_DRAWER:
+                drawFxDrawer();
                 break;
-            case SCREEN_EFFECT_BROWSER:
-                drawEffectBrowser();
+            case SCREEN_FX_LIST:
+                drawFxList();
                 break;
-            case SCREEN_PALETTE_BROWSER:
-                drawPaletteBrowser();
-                break;
-            case SCREEN_COLOR_PICKER:
-                drawColorPicker();
+            case SCREEN_PAL_LIST:
+                drawPalList();
                 break;
             default:
+                drawPlaceholder();
                 break;
         }
         needsRedraw = false;
